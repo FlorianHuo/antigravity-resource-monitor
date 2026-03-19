@@ -87,16 +87,16 @@ function getSystemMemoryInfo(): SystemMemoryInfo | null {
         }
 
         // Determine pressure level based on practical heuristics:
-        //   - Normal: app memory < 75% of total, swap < 1 GB
-        //   - Warn: app memory 75-90% of total, or swap 1-4 GB
-        //   - Critical: app memory > 90% of total, or swap > 4 GB
+        //   - Normal: app memory < 75% of total, swap < 4 GB
+        //   - Warn: app memory 75-90% of total, or swap 4-8 GB
+        //   - Critical: app memory > 90% of total, or swap > 8 GB
         const appRatio = appMemoryBytes / totalBytes;
         const swapGB = swapUsedBytes / (1024 * 1024 * 1024);
 
         let pressureLevel: string;
-        if (appRatio > 0.90 || swapGB > 4) {
+        if (appRatio > 0.90 || swapGB > 8) {
             pressureLevel = 'Critical';
-        } else if (appRatio > 0.75 || swapGB > 1) {
+        } else if (appRatio > 0.75 || swapGB > 4) {
             pressureLevel = 'Warn';
         } else {
             pressureLevel = 'Normal';
