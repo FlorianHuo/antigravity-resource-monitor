@@ -1,8 +1,8 @@
 {
   "name": "antigravity-resource-monitor",
   "displayName": "Resource Monitor",
-  "description": "Monitor and display per-window memory usage in the status bar",
-  "version": "0.1.0",
+  "description": "Monitor per-window memory, system pressure, and manage all Antigravity processes",
+  "version": "0.2.0",
   "publisher": "florian",
   "engines": {
     "vscode": "^1.85.0"
@@ -16,6 +16,10 @@
   "main": "./out/extension.js",
   "contributes": {
     "commands": [
+      {
+        "command": "resourceMonitor.showDashboard",
+        "title": "Resource Monitor: Process Dashboard"
+      },
       {
         "command": "resourceMonitor.showDetails",
         "title": "Resource Monitor: Show Memory Details"
