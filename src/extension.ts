@@ -3,7 +3,24 @@ import * as os from 'os';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as crypto from 'crypto';
-import { execSync } from 'child_process';
+import { execSync, exec } from 'child_process';
+import { promisify } from 'util';
+
+const execPromise = promisify(exec);
+
+// Non-blocking shell execution to keep the event loop responsive.
+// Returns stdout even if the command exits non-zero (common with batched
+// commands where sub-commands like footprint may fail due to permissions).
+async function execAsync(cmd: string, timeout: number = 3000): Promise<string> {
+    try {
+        const { stdout } = await execPromise(cmd, { timeout });
+        return stdout;
+    } catch (err: any) {
+        // exec rejects on non-zero exit, but stdout is still available
+        if (err.stdout) { return err.stdout; }
+        throw err;
+    }
+}
 
 // ============================================================
 // Constants
@@ -312,11 +329,33 @@ function maxSeverity(current: PressureSeverity, next: PressureSeverity): Pressur
     return current > next ? current : next;
 }
 
-function getSystemMemoryInfo(): SystemMemoryInfo | null {
+async function getSystemMemoryInfo(): Promise<SystemMemoryInfo | null> {
     if (process.platform !== 'darwin') { return null; }
     try {
         const totalBytes = os.totalmem();
-        const vmStatRaw = execSync('vm_stat', { encoding: 'utf8', timeout: 2000 });
+
+        // Single shell command gathers ALL system memory data in one process fork
+        const batchRaw = await execAsync(
+            'echo "===VMSTAT===" && vm_stat 2>/dev/null;'
+            + ' echo "===SWAP===" && sysctl vm.swapusage 2>/dev/null;'
+            + ' echo "===PRESSURE===" && sysctl -n kern.memorystatus_vm_pressure_level 2>/dev/null;'
+            + ' echo "===LEVEL===" && sysctl -n kern.memorystatus_level 2>/dev/null;'
+            + ' echo "===TRANSITION===" && sysctl -n kern.vm_pressure_level_transition_threshold 2>/dev/null;'
+            + ' echo "===MEMPRESSURE===" && memory_pressure 2>/dev/null;'
+            + ' echo "===END==="',
+            5000
+        );
+
+        // Helper to extract section between markers
+        const getSection = (start: string, end: string): string => {
+            const startIdx = batchRaw.indexOf(start);
+            const endIdx = batchRaw.indexOf(end);
+            if (startIdx < 0) { return ''; }
+            return batchRaw.slice(startIdx + start.length, endIdx >= 0 ? endIdx : undefined).trim();
+        };
+
+        // Parse vm_stat
+        const vmStatRaw = getSection('===VMSTAT===', '===SWAP===');
         const pageSize = parseInt(vmStatRaw.match(/page size of (\d+)/)?.[1] ?? '16384', 10);
         const getPages = (label: string): number => {
             const match = vmStatRaw.match(new RegExp(`${label}:\\s+(\\d+)`));
@@ -326,57 +365,49 @@ function getSystemMemoryInfo(): SystemMemoryInfo | null {
         const wiredBytes = getPages('Pages wired down') * pageSize;
         const compressedBytes = getPages('Pages occupied by compressor') * pageSize;
 
+        // Parse swap
         let swapUsedBytes = 0;
-        try {
-            const swapRaw = execSync('sysctl vm.swapusage', { encoding: 'utf8', timeout: 2000 });
-            const m = swapRaw.match(/used\s*=\s*([\d.]+)([MGK])/);
-            if (m) { swapUsedBytes = parseFloat(m[1]) * (m[2] === 'G' ? 1073741824 : m[2] === 'M' ? 1048576 : 1024); }
-        }
-        catch { /* ignore */ }
+        const swapRaw = getSection('===SWAP===', '===PRESSURE===');
+        const swapMatch = swapRaw.match(/used\s*=\s*([\d.]+)([MGK])/);
+        if (swapMatch) { swapUsedBytes = parseFloat(swapMatch[1]) * (swapMatch[2] === 'G' ? 1073741824 : swapMatch[2] === 'M' ? 1048576 : 1024); }
 
         const appRatio = appMemoryBytes / totalBytes;
         const compressedRatio = compressedBytes / totalBytes;
         let nativeSeverity: PressureSeverity | null = null;
         let fallbackSeverity: PressureSeverity = 0;
 
-        // Prefer the native macOS pressure state used for memory pressure notifications:
-        // 1 = normal, 2 = warning (yellow), 4 = critical (red).
-        try {
-            const nativeLevelRaw = execSync('sysctl -n kern.memorystatus_vm_pressure_level', { encoding: 'utf8', timeout: 1000 }).trim();
-            const nativeLevel = parseInt(nativeLevelRaw, 10);
+        // Parse native pressure level (1=normal, 2=warning, 4=critical)
+        const pressureRaw = getSection('===PRESSURE===', '===LEVEL===');
+        if (pressureRaw) {
+            const nativeLevel = parseInt(pressureRaw, 10);
             nativeSeverity = mapNativePressureLevel(nativeLevel);
             if (nativeSeverity !== null) {
                 fallbackSeverity = maxSeverity(fallbackSeverity, nativeSeverity);
             }
         }
-        catch { /* ignore */ }
 
-        try {
-            // Lower available-memory percentage means higher pressure.
-            const levelRaw = execSync('sysctl -n kern.memorystatus_level', { encoding: 'utf8', timeout: 1000 }).trim();
+        // Parse memorystatus_level
+        const levelRaw = getSection('===LEVEL===', '===TRANSITION===');
+        if (levelRaw) {
             const level = parseInt(levelRaw, 10);
             if (!Number.isNaN(level)) {
                 fallbackSeverity = maxSeverity(fallbackSeverity, level <= 15 ? 2 : level <= 40 ? 1 : 0);
             }
         }
-        catch { /* ignore */ }
 
-        try {
-            // memory_pressure tracks the same user-facing memory pressure view and is
-            // a useful fallback when the kernel enum is missing or lags.
-            const transitionRaw = execSync('sysctl -n kern.vm_pressure_level_transition_threshold', { encoding: 'utf8', timeout: 1000 }).trim();
+        // Parse transition threshold + memory_pressure free percentage
+        const transitionRaw = getSection('===TRANSITION===', '===MEMPRESSURE===');
+        const memPressureRaw = getSection('===MEMPRESSURE===', '===END===');
+        if (transitionRaw && memPressureRaw) {
             const transition = parseInt(transitionRaw, 10);
-            const pressureRaw = execSync('memory_pressure', { encoding: 'utf8', timeout: 2000 });
-            const freePct = parseInt(pressureRaw.match(/System-wide memory free percentage:\s*(\d+)%/)?.[1] ?? '', 10);
+            const freePct = parseInt(memPressureRaw.match(/System-wide memory free percentage:\s*(\d+)%/)?.[1] ?? '', 10);
             if (!Number.isNaN(transition) && !Number.isNaN(freePct)) {
                 const criticalFreePct = Math.max(5, transition - 10);
                 fallbackSeverity = maxSeverity(fallbackSeverity, freePct <= criticalFreePct ? 2 : freePct <= transition + 5 ? 1 : 0);
             }
         }
-        catch { /* ignore */ }
 
         // Heuristics are only a fallback when the native pressure enum is unavailable.
-        // Swap/compression can be high for a while after pressure has fallen back to yellow.
         if (nativeSeverity === null) {
             if (appRatio > 0.95 || swapUsedBytes >= 2 * 1024 * 1024 * 1024) {
                 fallbackSeverity = maxSeverity(fallbackSeverity, 2);
@@ -398,7 +429,7 @@ function getSystemMemoryInfo(): SystemMemoryInfo | null {
  * @param pids - Array of PIDs to query
  * @returns PID -> footprint in KB
  */
-function getFootprints(pids: number[]): Map<number, number> {
+async function getFootprints(pids: number[]): Promise<Map<number, number>> {
     const result = new Map<number, number>();
     if (pids.length === 0 || process.platform !== 'darwin') {
         return result;
@@ -406,7 +437,7 @@ function getFootprints(pids: number[]): Map<number, number> {
     try {
         // Build space-separated PID args for footprint command
         const pidArgs = pids.join(' ');
-        const raw = execSync(`footprint ${pidArgs} 2>/dev/null`, { encoding: 'utf8', timeout: 5000 });
+        const raw = await execAsync(`footprint ${pidArgs} 2>/dev/null`, 5000);
         // Parse lines like: "language_server_macos_arm [86654]: 64-bit    Footprint: 230 MB"
         const regex = /\[(\d+)\].*?Footprint:\s*([\d.]+)\s*(KB|MB|GB)/g;
         let match;
@@ -461,13 +492,17 @@ function classifySharedProcess(command: string): string {
     return 'Other';
 }
 
-function scanWorkspaces(): ScanResult {
+async function scanWorkspaces(): Promise<ScanResult> {
     const registry = readRegistry();
 
     try {
-        const raw = execSync(
+        // Single shell command to get process list (RSS as memory metric)
+        // Note: footprint is omitted because it requires same-user permission for
+        // each target PID, and most Antigravity processes are inaccessible, causing
+        // the command to hang for 9+ seconds. RSS is a good-enough approximation.
+        const raw = await execAsync(
             'ps -eo pid,ppid,rss,pcpu,command | grep -i Antigravity | grep -v grep',
-            { encoding: 'utf8', timeout: 3000 }
+            3000
         );
 
         const allProcs: ProcessInfo[] = [];
@@ -483,15 +518,6 @@ function scanWorkspaces(): ScanResult {
                 cpu: parseFloat(m[4]),
                 command: m[5],
             });
-        }
-
-        // Get footprint for all Antigravity processes (matches Activity Monitor)
-        const allPids = allProcs.map(p => p.pid);
-        const footprints = getFootprints(allPids);
-        for (const p of allProcs) {
-            if (footprints.has(p.pid)) {
-                p.memKB = footprints.get(p.pid)!;
-            }
         }
 
         const wsToExtHost = new Map<string, number>();
@@ -581,15 +607,10 @@ function scanWorkspaces(): ScanResult {
  * This matches the dashboard metric, unlike process.memoryUsage().rss which only
  * shows the extension host's own RSS.
  */
-function getCurrentWindowMemoryKB(): number {
+async function getCurrentWindowMemoryKB(): Promise<number> {
     try {
         const myPid = process.pid;
-        // Collect self + direct children PIDs
-        const raw = execSync(
-            `ps -eo pid,ppid,rss | grep -v grep`,
-            { encoding: 'utf8', timeout: 2000 }
-        );
-        const relevantPids: number[] = [];
+        const raw = await execAsync('ps -eo pid,ppid,rss | grep -v grep', 2000);
         let rssTotal = 0;
         for (const line of raw.split('\n')) {
             const m = line.trim().match(/^(\d+)\s+(\d+)\s+(\d+)$/);
@@ -598,21 +619,7 @@ function getCurrentWindowMemoryKB(): number {
             const ppid = parseInt(m[2], 10);
             const rss = parseInt(m[3], 10);
             if (pid === myPid || ppid === myPid) {
-                relevantPids.push(pid);
                 rssTotal += rss;
-            }
-        }
-        // Try footprint for accurate memory (matches Activity Monitor)
-        if (relevantPids.length > 0) {
-            const footprints = getFootprints(relevantPids);
-            if (footprints.size > 0) {
-                let fpTotal = 0;
-                for (const kb of footprints.values()) {
-                    fpTotal += kb;
-                }
-                if (fpTotal > 0) {
-                    return fpTotal;
-                }
             }
         }
         return rssTotal || Math.round(process.memoryUsage().rss / 1024);
@@ -626,94 +633,12 @@ function getCurrentWindowMemoryKB(): number {
 // WebView dashboard
 // ============================================================
 
-function generateDashboardHtml(webview: vscode.Webview): string {
-    const data = scanWorkspaces();
-    const sysInfo = getSystemMemoryInfo();
-
-    // Generate CSP nonce for inline script
+/**
+ * Generate the static dashboard HTML shell. This is loaded ONCE into the WebView.
+ * Subsequent updates are sent via postMessage to avoid full-page reloads.
+ */
+function generateDashboardShell(): string {
     const nonce = crypto.randomBytes(16).toString('base64');
-
-    const totalStr = formatBytes(data.totalMemoryKB * 1024);
-    const sharedStr = formatBytes(data.sharedMemoryKB * 1024);
-
-    let sysBar = '';
-    if (sysInfo) {
-        const totalRAM = formatBytes(sysInfo.totalBytes);
-        const appMem = formatBytes(sysInfo.appMemoryBytes);
-        const swap = formatBytes(sysInfo.swapUsedBytes);
-        const pressureColor = sysInfo.pressureLevel === 'Critical' ? '#f44747'
-            : sysInfo.pressureLevel === 'Warn' ? '#cca700' : '#4ec44e';
-        sysBar = `
-        <div class="sys-bar">
-            <span>System: <b>${totalRAM}</b> RAM</span>
-            <span>App Memory: <b>${appMem}</b></span>
-            <span>Swap: <b>${swap}</b></span>
-            <span>Pressure: <b style="color:${pressureColor}">${sysInfo.pressureLevel}</b></span>
-        </div>`;
-    }
-
-    const wsRows = data.workspaces.map(ws => {
-        const memStr = formatBytes(ws.totalMemoryKB * 1024);
-        const memPercent = data.totalMemoryKB > 0
-            ? ((ws.totalMemoryKB / data.totalMemoryKB) * 100).toFixed(1) : '0';
-        const barColor = ws.totalMemoryKB > 500 * 1024 ? '#f44747'
-            : ws.totalMemoryKB > 200 * 1024 ? '#cca700' : '#4ec44e';
-        const barWidth = data.totalMemoryKB > 0
-            ? Math.max(2, (ws.totalMemoryKB / data.totalMemoryKB) * 100) : 0;
-
-        const procRows = ws.processList.map(p => {
-            const memValue = p.memKB;
-            const procMemStr = memValue >= 1024 * 1024 ? `${(memValue / (1024 * 1024)).toFixed(1)} GB` : `${(memValue / 1024).toFixed(0)} MB`;
-            return `
-            <div class="proc-row">
-                <span class="proc-type">${p.type}</span>
-                <span class="proc-mem">${procMemStr}</span>
-                <span class="proc-cpu">${p.cpu.toFixed(1)}%</span>
-                <span class="proc-pid">PID ${p.pid}</span>
-                <button class="kill-btn" data-action="kill" data-pid="${p.pid}" title="Kill">x</button>
-            </div>
-        `;
-        }).join('');
-
-        // Escape the name for use in JS strings
-        const escapedName = ws.name.replace(/'/g, "\\'");
-        const subtitleHtml = ws.subtitle
-            ? `<div class="ws-subtitle" data-action="rename" data-name="${ws.name}">` + ws.subtitle + `</div>`
-            : `<div class="ws-subtitle ws-subtitle-empty" data-action="rename" data-name="${ws.name}">click to label</div>`;
-
-        return `
-        <div class="ws-card${ws.isZombie ? ' zombie' : ''}">
-            <div class="ws-header">
-                <div class="ws-info">
-                    <div class="ws-name">${ws.name}</div>
-                    ${subtitleHtml}
-                </div>
-                <div class="ws-stats">
-                    <span class="ws-mem">${memStr}</span>
-                    <span class="ws-pct">${memPercent}%</span>
-                    <button class="kill-all-btn" data-action="killWorkspace" data-pid="${ws.extHostPid}" data-name="${ws.name}" title="Kill this workspace">Kill</button>
-                </div>
-            </div>
-            <div class="ws-bar-track">
-                <div class="ws-bar-fill" style="width:${barWidth}%; background:${barColor}"></div>
-            </div>
-            <div class="ws-details hidden">
-                ${procRows}
-            </div>
-        </div>`;
-    }).join('');
-
-    // Build zombie bar HTML before the template
-    const zombies = data.workspaces.filter(ws => ws.isZombie);
-    let zombieBar = '';
-    if (zombies.length > 0) {
-        const zombieStr = formatBytes(zombies.reduce((s, z) => s + z.totalMemoryKB, 0) * 1024);
-        const pids = zombies.map(z => z.extHostPid).join(',');
-        zombieBar = `<div class="zombie-bar">
-            <span><b>${zombies.length}</b> zombie playground(s) using <b>${zombieStr}</b> (unnamed, empty)</span>
-            <button class="zombie-kill-btn" data-action="killZombies" data-pids="${pids}">Kill All Zombies</button>
-        </div>`;
-    }
 
     return `<!DOCTYPE html>
 <html>
@@ -827,91 +752,221 @@ function generateDashboardHtml(webview: vscode.Webview): string {
     .ws-card.zombie:hover { opacity: 0.8; }
     .header-actions { display: flex; gap: 8px; align-items: center; }
     .auto-refresh-label { font-size: 11px; opacity: 0.4; }
+    .loading { text-align: center; padding: 40px; opacity: 0.5; }
 </style>
 </head>
 <body>
     <div class="header">
         <div>
             <h2>Antigravity Process Monitor</h2>
-            <div class="summary">${data.workspaces.length} workspaces | ${data.processCount} processes | ${totalStr} total (footprint)</div>
+            <div class="summary" id="summary">Loading...</div>
         </div>
         <div class="header-actions">
             <span class="auto-refresh-label">Auto-refresh: ${DASHBOARD_POLL_MS / 1000}s</span>
             <button class="refresh-btn" data-action="reloadWindow" style="background:#1389fd">Reload Window</button>
-            <button class="refresh-btn" data-action="refresh">Refresh</button>
+            <button class="refresh-btn" data-action="refresh" style="background:#4ec44e">Refresh</button>
         </div>
     </div>
-    ${sysBar}
-    ${zombieBar}
-    ${wsRows}
-    <div class="ws-card" style="opacity:0.7">
-        <div class="ws-header">
-            <div class="ws-info">
-                <div class="ws-name">Shared Processes</div>
-                <div class="ws-subtitle">main, GPU, renderers, utilities</div>
-            </div>
-            <div class="ws-stats">
-                <span class="ws-mem">${sharedStr}</span>
-                <span class="ws-pct">${data.totalMemoryKB > 0 ? ((data.sharedMemoryKB / data.totalMemoryKB) * 100).toFixed(1) : '0'}%</span>
-            </div>
-        </div>
-        <div class="ws-bar-track">
-            <div class="ws-bar-fill" style="width:${data.totalMemoryKB > 0 ? Math.max(2, (data.sharedMemoryKB / data.totalMemoryKB) * 100) : 0}%; background:#888"></div>
-        </div>
-        <div class="ws-details hidden">
-            ${data.sharedProcesses.map(p => {
-                const procMemStr = formatBytes(p.memKB * 1024);
-                return `<div class="proc-row">
-                    <span class="proc-type">${p.type}</span>
-                    <span class="proc-mem">${procMemStr}</span>
-                    <span class="proc-cpu">${p.cpu.toFixed(1)}%</span>
-                    <span class="proc-pid">PID ${p.pid}</span>
-                    <button class="kill-btn" data-action="kill" data-pid="${p.pid}" title="Kill">x</button>
-                </div>`;
-            }).join('')}
-        </div>
-    </div>
+    <div id="sys-bar-container"></div>
+    <div id="zombie-bar-container"></div>
+    <div id="workspaces-container"><div class="loading">Scanning processes...</div></div>
+    <div id="shared-container"></div>
     <script nonce="${nonce}">
-        (function() {
-            try {
-                var vscode = acquireVsCodeApi();
-            } catch(err) {
-                document.body.insertAdjacentHTML('beforeend',
-                    '<pre style="color:red;padding:8px">Script Error: ' + err.message + '</pre>');
+    (function() {
+        try {
+            var vscode = acquireVsCodeApi();
+        } catch(err) {
+            document.body.insertAdjacentHTML('beforeend',
+                '<pre style="color:red;padding:8px">Script Error: ' + err.message + '</pre>');
+            return;
+        }
+
+        // Track which workspace details are expanded (preserved across data updates)
+        var expandedWorkspaces = {};
+
+        function escapeHtml(s) {
+            return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+        }
+
+        function fmtBytes(bytes) {
+            if (bytes < 1024) return bytes + ' B';
+            if (bytes < 1024*1024) return (bytes/1024).toFixed(1) + ' KB';
+            if (bytes < 1024*1024*1024) return (bytes/(1024*1024)).toFixed(0) + ' MB';
+            return (bytes/(1024*1024*1024)).toFixed(1) + ' GB';
+        }
+
+        function renderData(msg) {
+            var data = msg.scan;
+            var sysInfo = msg.sysInfo;
+
+            // Summary
+            document.getElementById('summary').textContent =
+                data.workspaces.length + ' workspaces | ' + data.processCount + ' processes | ' + fmtBytes(data.totalMemoryKB * 1024) + ' total (footprint)';
+
+            // System bar
+            var sysEl = document.getElementById('sys-bar-container');
+            if (sysInfo) {
+                var pressureColor = sysInfo.pressureLevel === 'Critical' ? '#f44747'
+                    : sysInfo.pressureLevel === 'Warn' ? '#cca700' : '#4ec44e';
+                sysEl.innerHTML = '<div class="sys-bar">'
+                    + '<span>System: <b>' + fmtBytes(sysInfo.totalBytes) + '</b> RAM</span>'
+                    + '<span>App Memory: <b>' + fmtBytes(sysInfo.appMemoryBytes) + '</b></span>'
+                    + '<span>Swap: <b>' + fmtBytes(sysInfo.swapUsedBytes) + '</b></span>'
+                    + '<span>Pressure: <b style="color:' + pressureColor + '">' + sysInfo.pressureLevel + '</b></span>'
+                    + '</div>';
+            } else {
+                sysEl.innerHTML = '';
+            }
+
+            // Zombie bar
+            var zombies = data.workspaces.filter(function(ws) { return ws.isZombie; });
+            var zombieEl = document.getElementById('zombie-bar-container');
+            if (zombies.length > 0) {
+                var zombieMemKB = zombies.reduce(function(s,z) { return s + z.totalMemoryKB; }, 0);
+                var zombiePids = zombies.map(function(z) { return z.extHostPid; }).join(',');
+                zombieEl.innerHTML = '<div class="zombie-bar">'
+                    + '<span><b>' + zombies.length + '</b> zombie playground(s) using <b>' + fmtBytes(zombieMemKB * 1024) + '</b> (unnamed, empty)</span>'
+                    + '<button class="zombie-kill-btn" data-action="killZombies" data-pids="' + zombiePids + '">Kill All Zombies</button>'
+                    + '</div>';
+            } else {
+                zombieEl.innerHTML = '';
+            }
+
+            // Workspace cards
+            var wsHtml = '';
+            for (var i = 0; i < data.workspaces.length; i++) {
+                var ws = data.workspaces[i];
+                var memStr = fmtBytes(ws.totalMemoryKB * 1024);
+                var memPct = data.totalMemoryKB > 0
+                    ? ((ws.totalMemoryKB / data.totalMemoryKB) * 100).toFixed(1) : '0';
+                var barColor = ws.totalMemoryKB > 500*1024 ? '#f44747'
+                    : ws.totalMemoryKB > 200*1024 ? '#cca700' : '#4ec44e';
+                var barWidth = data.totalMemoryKB > 0
+                    ? Math.max(2, (ws.totalMemoryKB / data.totalMemoryKB) * 100) : 0;
+
+                var isExpanded = expandedWorkspaces[ws.name] || false;
+
+                var procHtml = '';
+                for (var j = 0; j < ws.processList.length; j++) {
+                    var p = ws.processList[j];
+                    var pMem = p.memKB >= 1024*1024 ? (p.memKB/(1024*1024)).toFixed(1)+' GB' : (p.memKB/1024).toFixed(0)+' MB';
+                    procHtml += '<div class="proc-row">'
+                        + '<span class="proc-type">' + escapeHtml(p.type) + '</span>'
+                        + '<span class="proc-mem">' + pMem + '</span>'
+                        + '<span class="proc-cpu">' + p.cpu.toFixed(1) + '%</span>'
+                        + '<span class="proc-pid">PID ' + p.pid + '</span>'
+                        + '<button class="kill-btn" data-action="kill" data-pid="' + p.pid + '" title="Kill">x</button>'
+                        + '</div>';
+                }
+
+                var subtitleHtml = ws.subtitle
+                    ? '<div class="ws-subtitle" data-action="rename" data-name="' + escapeHtml(ws.name) + '">' + escapeHtml(ws.subtitle) + '</div>'
+                    : '<div class="ws-subtitle ws-subtitle-empty" data-action="rename" data-name="' + escapeHtml(ws.name) + '">click to label</div>';
+
+                wsHtml += '<div class="ws-card' + (ws.isZombie ? ' zombie' : '') + '" data-ws-name="' + escapeHtml(ws.name) + '">'
+                    + '<div class="ws-header">'
+                    + '<div class="ws-info"><div class="ws-name">' + escapeHtml(ws.name) + '</div>' + subtitleHtml + '</div>'
+                    + '<div class="ws-stats"><span class="ws-mem">' + memStr + '</span><span class="ws-pct">' + memPct + '%</span>'
+                    + '<button class="kill-all-btn" data-action="killWorkspace" data-pid="' + ws.extHostPid + '" data-name="' + escapeHtml(ws.name) + '" title="Kill this workspace">Kill</button>'
+                    + '</div></div>'
+                    + '<div class="ws-bar-track"><div class="ws-bar-fill" style="width:' + barWidth + '%;background:' + barColor + '"></div></div>'
+                    + '<div class="ws-details' + (isExpanded ? '' : ' hidden') + '">' + procHtml + '</div>'
+                    + '</div>';
+            }
+            document.getElementById('workspaces-container').innerHTML = wsHtml;
+
+            // Shared processes card
+            var sharedStr = fmtBytes(data.sharedMemoryKB * 1024);
+            var sharedPct = data.totalMemoryKB > 0 ? ((data.sharedMemoryKB / data.totalMemoryKB) * 100).toFixed(1) : '0';
+            var sharedBarW = data.totalMemoryKB > 0 ? Math.max(2, (data.sharedMemoryKB / data.totalMemoryKB) * 100) : 0;
+            var sharedIsExpanded = expandedWorkspaces['__shared__'] || false;
+            var sharedProcHtml = '';
+            for (var k = 0; k < data.sharedProcesses.length; k++) {
+                var sp = data.sharedProcesses[k];
+                var spMem = fmtBytes(sp.memKB * 1024);
+                sharedProcHtml += '<div class="proc-row">'
+                    + '<span class="proc-type">' + escapeHtml(sp.type) + '</span>'
+                    + '<span class="proc-mem">' + spMem + '</span>'
+                    + '<span class="proc-cpu">' + sp.cpu.toFixed(1) + '%</span>'
+                    + '<span class="proc-pid">PID ' + sp.pid + '</span>'
+                    + '<button class="kill-btn" data-action="kill" data-pid="' + sp.pid + '" title="Kill">x</button>'
+                    + '</div>';
+            }
+            document.getElementById('shared-container').innerHTML =
+                '<div class="ws-card" style="opacity:0.7" data-ws-name="__shared__">'
+                + '<div class="ws-header"><div class="ws-info"><div class="ws-name">Shared Processes</div>'
+                + '<div class="ws-subtitle">main, GPU, renderers, utilities</div></div>'
+                + '<div class="ws-stats"><span class="ws-mem">' + sharedStr + '</span><span class="ws-pct">' + sharedPct + '%</span></div></div>'
+                + '<div class="ws-bar-track"><div class="ws-bar-fill" style="width:' + sharedBarW + '%;background:#888"></div></div>'
+                + '<div class="ws-details' + (sharedIsExpanded ? '' : ' hidden') + '">' + sharedProcHtml + '</div>'
+                + '</div>';
+        }
+
+        // Listen for data updates from the extension
+        window.addEventListener('message', function(event) {
+            var msg = event.data;
+            if (msg.command === 'updateData') {
+                renderData(msg);
+            }
+        });
+
+        // Handle clicks (delegated)
+        document.addEventListener('click', function(e) {
+            var target = e.target;
+            var action = target.dataset ? target.dataset.action : null;
+            if (!action) {
+                var header = target.closest('.ws-header');
+                if (header) {
+                    var card = header.parentElement;
+                    var details = card ? card.querySelector('.ws-details') : null;
+                    if (details) {
+                        details.classList.toggle('hidden');
+                        // Remember expand state
+                        var wsName = card.dataset.wsName;
+                        if (wsName) {
+                            expandedWorkspaces[wsName] = !details.classList.contains('hidden');
+                        }
+                    }
+                }
                 return;
             }
-            document.addEventListener('click', function(e) {
-                var target = e.target as HTMLElement;
-                var action = target.dataset ? target.dataset.action : null;
-                if (!action) {
-                    var header = target.closest('.ws-header');
-                    if (header) {
-                        var details = header.parentElement?.querySelector('.ws-details');
-                        if (details) { details.classList.toggle('hidden'); }
-                    }
-                    return;
-                }
-                e.stopPropagation();
-                if (action === 'refresh') {
-                    vscode.postMessage({ command: 'refresh' });
-                } else if (action === 'reloadWindow') {
-                    vscode.postMessage({ command: 'reloadWindow' });
-                } else if (action === 'kill') {
-                    vscode.postMessage({ command: 'kill', pid: parseInt(target.dataset.pid!) });
-                } else if (action === 'killWorkspace') {
-                    vscode.postMessage({ command: 'killWorkspace', pid: parseInt(target.dataset.pid!), name: target.dataset.name });
-                } else if (action === 'rename') {
-                    vscode.postMessage({ command: 'rename', name: target.dataset.name });
-                } else if (action === 'killZombies') {
-                    vscode.postMessage({ command: 'killZombies', pids: target.dataset.pids });
-                }
-            });
-            document.body.insertAdjacentHTML('beforeend',
-                '<div style="color:#4ec44e;font-size:11px;padding:4px 12px;opacity:0.5">JS loaded OK</div>');
-        })();
+            e.stopPropagation();
+            if (action === 'refresh') {
+                document.getElementById('summary').textContent = 'Refreshing...';
+                vscode.postMessage({ command: 'refresh' });
+            } else if (action === 'reloadWindow') {
+                vscode.postMessage({ command: 'reloadWindow' });
+            } else if (action === 'kill') {
+                vscode.postMessage({ command: 'kill', pid: parseInt(target.dataset.pid) });
+            } else if (action === 'killWorkspace') {
+                vscode.postMessage({ command: 'killWorkspace', pid: parseInt(target.dataset.pid), name: target.dataset.name });
+            } else if (action === 'rename') {
+                vscode.postMessage({ command: 'rename', name: target.dataset.name });
+            } else if (action === 'killZombies') {
+                vscode.postMessage({ command: 'killZombies', pids: target.dataset.pids });
+            }
+        });
+
+        // Request initial data
+        vscode.postMessage({ command: 'refresh' });
+    })();
     </script>
 </body>
 </html>`;
+}
+
+/**
+ * Gather dashboard data and send it to the WebView via postMessage.
+ * This avoids full-page reloads, keeping button responsiveness instant.
+ */
+async function sendDashboardData(panel: vscode.WebviewPanel): Promise<void> {
+    // Run data gathering in parallel for faster response
+    const [data, sysInfo] = await Promise.all([scanWorkspaces(), getSystemMemoryInfo()]);
+    panel.webview.postMessage({
+        command: 'updateData',
+        scan: data,
+        sysInfo: sysInfo,
+    });
 }
 
 // ============================================================
@@ -988,11 +1043,13 @@ export function activate(context: vscode.ExtensionContext): void {
     const registryInterval = setInterval(registerSelf, 30000);
     const editorListener = vscode.window.onDidChangeActiveTextEditor(() => registerSelf());
 
-    function updateStatusBar(): void {
-        if (!isVisible) { return; }
-
+    let statusBarUpdating = false;
+    async function updateStatusBar(): Promise<void> {
+        if (!isVisible || statusBarUpdating) { return; }
+        statusBarUpdating = true;
+        try {
         // Use the same metric as the dashboard: ext host + children RSS
-        const totalKB = getCurrentWindowMemoryKB();
+        const totalKB = await getCurrentWindowMemoryKB();
         const rssStr = formatBytes(totalKB * 1024);
 
         // Track memory history for sparkline
@@ -1001,7 +1058,7 @@ export function activate(context: vscode.ExtensionContext): void {
         const sparkline = generateSparkline(memoryHistory);
 
         // Combine window memory + system pressure in one item
-        const sysInfo = getSystemMemoryInfo();
+        const sysInfo = await getSystemMemoryInfo();
         const pressureLbl = sysInfo ? ` | ${sysInfo.pressureLevel}` : '';
         statusItem.text = `$(pulse) ${rssStr}${pressureLbl}`;
         statusItem.color = getWindowColor(totalKB);
@@ -1017,6 +1074,8 @@ export function activate(context: vscode.ExtensionContext): void {
         tooltipLines.push('Click for dashboard');
         statusItem.tooltip = tooltipLines.join('\n');
         statusItem.show();
+        } catch { /* swallow errors to keep timer alive */ }
+        finally { statusBarUpdating = false; }
     }
 
     updateStatusBar();
@@ -1025,11 +1084,15 @@ export function activate(context: vscode.ExtensionContext): void {
     // --- Dashboard auto-refresh ---
     let dashboardRefreshInterval: ReturnType<typeof setInterval> | undefined;
 
-    function refreshDashboard(): void {
-        if (dashboardPanel) {
+    let dashboardRefreshing = false;
+    async function refreshDashboard(): Promise<void> {
+        if (!dashboardPanel || dashboardRefreshing) { return; }
+        dashboardRefreshing = true;
+        try {
             registerSelf();
-            dashboardPanel.webview.html = generateDashboardHtml(dashboardPanel.webview);
-        }
+            await sendDashboardData(dashboardPanel);
+        } catch { /* swallow */ }
+        finally { dashboardRefreshing = false; }
     }
 
     function startDashboardAutoRefresh(): void {
@@ -1045,7 +1108,7 @@ export function activate(context: vscode.ExtensionContext): void {
     }
 
     // --- Dashboard command ---
-    const showDashboardCmd = vscode.commands.registerCommand('resourceMonitor.showDashboard', () => {
+    const showDashboardCmd = vscode.commands.registerCommand('resourceMonitor.showDashboard', async () => {
         registerSelf();
 
         if (dashboardPanel) {
@@ -1059,7 +1122,7 @@ export function activate(context: vscode.ExtensionContext): void {
             vscode.ViewColumn.One,
             { enableScripts: true, retainContextWhenHidden: true }
         );
-        dashboardPanel.webview.html = generateDashboardHtml(dashboardPanel.webview);
+        dashboardPanel.webview.html = generateDashboardShell();
         startDashboardAutoRefresh();
 
         dashboardPanel.webview.onDidReceiveMessage(async (msg: any) => {
@@ -1124,9 +1187,9 @@ export function activate(context: vscode.ExtensionContext): void {
         }
     });
 
-    const refreshCmd = vscode.commands.registerCommand('resourceMonitor.refreshProcesses', () => {
+    const refreshCmd = vscode.commands.registerCommand('resourceMonitor.refreshProcesses', async () => {
         registerSelf();
-        if (dashboardPanel) { dashboardPanel.webview.html = generateDashboardHtml(dashboardPanel.webview); }
+        if (dashboardPanel) { await sendDashboardData(dashboardPanel); }
     });
 
     context.subscriptions.push(
