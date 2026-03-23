@@ -1117,6 +1117,9 @@ export function activate(context: vscode.ExtensionContext): void {
             return;
         }
 
+        // Pre-fetch data while the WebView is initializing (runs in parallel)
+        const dataPromise = Promise.all([scanWorkspaces(), getSystemMemoryInfo()]);
+
         dashboardPanel = vscode.window.createWebviewPanel(
             'resourceMonitor', 'Process Monitor',
             vscode.ViewColumn.One,
@@ -1124,6 +1127,13 @@ export function activate(context: vscode.ExtensionContext): void {
         );
         dashboardPanel.webview.html = generateDashboardShell();
         startDashboardAutoRefresh();
+
+        // Send pre-fetched data immediately (no waiting for WebView JS init or 5s timer)
+        dataPromise.then(([scan, sysInfo]) => {
+            if (dashboardPanel) {
+                dashboardPanel.webview.postMessage({ command: 'updateData', scan, sysInfo });
+            }
+        }).catch(() => { /* swallow, auto-refresh will retry */ });
 
         dashboardPanel.webview.onDidReceiveMessage(async (msg: any) => {
             if (msg.command === 'refresh') {
