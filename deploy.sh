@@ -2,9 +2,11 @@
 # Deploy compiled extension to Antigravity extensions directory
 set -e
 
-EXT_DIR="$HOME/.antigravity/extensions/florian.antigravity-resource-monitor-0.2.0"
+# Read version from package.json so we don't hardcode it
+VERSION=$(node -p "require('./package.json').version")
+EXT_DIR="$HOME/.antigravity/extensions/florian.antigravity-resource-monitor-${VERSION}"
 
-echo "Deploying to $EXT_DIR..."
+echo "Deploying v${VERSION} to $EXT_DIR..."
 mkdir -p "$EXT_DIR/out"
 cp -f out/extension.js out/extension.js.map "$EXT_DIR/out/"
 cp -f package.json "$EXT_DIR/"
