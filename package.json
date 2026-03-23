@@ -1,0 +1,44 @@
+{
+    "name": "antigravity-resource-monitor",
+    "displayName": "Resource Monitor",
+    "description": "Monitor per-window memory, system pressure, and manage all Antigravity processes",
+    "version": "0.2.0",
+    "publisher": "florian",
+    "engines": {
+        "vscode": "^1.85.0"
+    },
+    "categories": [
+        "Other"
+    ],
+    "activationEvents": [
+        "onStartupFinished"
+    ],
+    "main": "./out/extension.js",
+    "contributes": {
+        "commands": [
+            {
+                "command": "resourceMonitor.showDashboard",
+                "title": "Resource Monitor: Process Dashboard"
+            },
+            {
+                "command": "resourceMonitor.showDetails",
+                "title": "Resource Monitor: Show Memory Details"
+            },
+            {
+                "command": "resourceMonitor.toggle",
+                "title": "Resource Monitor: Toggle Visibility"
+            }
+        ]
+    },
+    "scripts": {
+        "vscode:prepublish": "npm run compile",
+        "compile": "tsc -p ./",
+        "watch": "tsc -watch -p ./",
+        "deploy": "npm run compile && ./deploy.sh"
+    },
+    "devDependencies": {
+        "@types/vscode": "^1.85.0",
+        "@types/node": "^20.0.0",
+        "typescript": "^5.3.0"
+    }
+}
