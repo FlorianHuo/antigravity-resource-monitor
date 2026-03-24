@@ -900,13 +900,16 @@ function generateDashboardShell(): string {
         padding: 1px 6px; opacity: 0.5; transition: opacity 0.15s;
     }
     .kill-btn:hover { opacity: 1; background: #f4474722; }
-    .kill-all-btn {
-        background: transparent; color: #f44747; border: 1px solid #f4474755;
-        border-radius: 3px; cursor: pointer; font-size: 11px;
-        padding: 2px 8px; opacity: 0; transition: opacity 0.15s;
+    .kill-all-btn, .close-ws-btn {
+        background: transparent; border: 1px solid; border-radius: 3px;
+        cursor: pointer; font-size: 11px; padding: 2px 8px;
+        opacity: 0; transition: opacity 0.15s;
     }
-    .ws-header:hover .kill-all-btn { opacity: 0.7; }
+    .kill-all-btn { color: #f44747; border-color: #f4474755; }
+    .close-ws-btn { color: #e0a030; border-color: #e0a03055; }
+    .ws-header:hover .kill-all-btn, .ws-header:hover .close-ws-btn { opacity: 0.7; }
     .kill-all-btn:hover { opacity: 1 !important; background: #f4474722; }
+    .close-ws-btn:hover { opacity: 1 !important; background: #e0a03022; }
     .shared-row {
         display: flex; justify-content: space-between; padding: 8px 12px;
         font-size: 12px; opacity: 0.6; margin-top: 4px;
@@ -1045,11 +1048,12 @@ function generateDashboardShell(): string {
                     ? '<div class="ws-subtitle" data-action="rename" data-name="' + escapeHtml(ws.name) + '">' + escapeHtml(ws.subtitle) + '</div>'
                     : '<div class="ws-subtitle ws-subtitle-empty" data-action="rename" data-name="' + escapeHtml(ws.name) + '">click to label</div>';
 
+                var allWsPids = ws.processList.map(function(p) { return p.pid; }).join(',');
                 wsHtml += '<div class="ws-card' + (ws.isZombie ? ' zombie' : '') + '" data-ws-name="' + escapeHtml(ws.name) + '">'
                     + '<div class="ws-header">'
                     + '<div class="ws-info"><div class="ws-name">' + escapeHtml(ws.name) + '</div>' + subtitleHtml + '</div>'
                     + '<div class="ws-stats"><span class="ws-mem">' + memStr + '</span><span class="ws-pct">' + memPct + '%</span>'
-                    + '<button class="kill-all-btn" data-action="killWorkspace" data-pid="' + ws.extHostPid + '" data-name="' + escapeHtml(ws.name) + '" title="Kill this workspace">Kill</button>'
+                    + '<button class="close-ws-btn" data-action="closeWorkspace" data-pids="' + allWsPids + '" data-name="' + escapeHtml(ws.name) + '" title="Close workspace (kill all processes)">Close</button>'
                     + '</div></div>'
                     + '<div class="ws-bar-track"><div class="ws-bar-fill" style="width:' + barWidth + '%;background:' + barColor + '"></div></div>'
                     + '<div class="ws-details' + (isExpanded ? '' : ' hidden') + '">' + procHtml + '</div>'
@@ -1122,6 +1126,8 @@ function generateDashboardShell(): string {
                 vscode.postMessage({ command: 'kill', pid: parseInt(target.dataset.pid) });
             } else if (action === 'killWorkspace') {
                 vscode.postMessage({ command: 'killWorkspace', pid: parseInt(target.dataset.pid), name: target.dataset.name });
+            } else if (action === 'closeWorkspace') {
+                vscode.postMessage({ command: 'closeWorkspace', pids: target.dataset.pids, name: target.dataset.name });
             } else if (action === 'rename') {
                 vscode.postMessage({ command: 'rename', name: target.dataset.name });
             } else if (action === 'killZombies') {
@@ -1384,10 +1390,25 @@ export function activate(context: vscode.ExtensionContext): void {
                 }
             } else if (msg.command === 'killWorkspace') {
                 try {
-                    // Recursively kill the entire process tree (children, grandchildren, etc.)
                     killProcessTree(msg.pid);
                     vscode.window.showInformationMessage(`Workspace "${msg.name}" killed.`);
                 } catch { /* ignore */ }
+                setTimeout(refreshDashboard, 1500);
+            } else if (msg.command === 'closeWorkspace') {
+                // Kill ALL processes in this workspace group
+                const pids = (msg.pids as string).split(',').map(Number);
+                for (const pid of pids) {
+                    try { killProcessTree(pid); } catch { /* ignore */ }
+                }
+                // Clean up registry entry
+                try {
+                    const registry = readRegistry();
+                    if (registry.entries[msg.name]) {
+                        delete registry.entries[msg.name];
+                        writeRegistry(registry);
+                    }
+                } catch { /* ignore */ }
+                vscode.window.showInformationMessage(`Workspace "${msg.name}" closed (${pids.length} processes killed).`);
                 setTimeout(refreshDashboard, 1500);
             } else if (msg.command === 'killZombies') {
                 const pids = (msg.pids as string).split(',').map(Number);
