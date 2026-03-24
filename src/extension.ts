@@ -685,7 +685,7 @@ async function scanWorkspaces(): Promise<ScanResult> {
                     else if (p.command.includes('jsonServerMain')) { type = 'JSON Server'; }
                     else if (p.command.includes('pyrefly') || p.command.includes('pyre')) { type = 'Pyre'; }
                     group.processList.push({ pid: p.pid, type, memKB: p.memKB, peakMemKB: p.peakMemKB, cpu: p.cpu });
-                    group.totalMemoryKB += p.peakMemKB || p.memKB;
+                    group.totalMemoryKB += p.memKB;
                     assignedPids.add(p.pid);
                 }
             }
