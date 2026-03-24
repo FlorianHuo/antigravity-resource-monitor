@@ -40,6 +40,11 @@ npm run deploy    # Compile + copy to the Antigravity extensions directory
 
 ## Changelog
 
+### v0.3.2
+
+- **Auto-reload on cold start**: when a workspace hasn't been opened for >4 hours, automatically reload the window 60s after activation to clear `language_server` indexing memory leak
+- **Memory display fix**: workspace total now shows real-time memory instead of peak; peak is still annotated per-process
+
 ### v0.3.1
 
 - **Process attribution**: 3-phase Renderer matching algorithm
