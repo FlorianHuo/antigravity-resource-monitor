@@ -2,7 +2,7 @@
     "name": "antigravity-resource-monitor",
     "displayName": "Resource Monitor",
     "description": "Monitor per-window memory, system pressure, and manage all Antigravity processes",
-    "version": "0.3.0",
+    "version": "0.3.1",
     "publisher": "florian",
     "engines": {
         "vscode": "^1.85.0"

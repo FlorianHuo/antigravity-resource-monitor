@@ -40,6 +40,16 @@ npm run deploy    # Compile + copy to the Antigravity extensions directory
 
 ## Changelog
 
+### v0.3.1
+
+- **Process attribution**: 3-phase Renderer matching algorithm
+  - Phase A: window Renderers identified by startup PID proximity to Main process
+  - Phase B: WebView/panel Renderers matched by nearest PID to Extension Host
+  - Phase C: sibling Plugin processes matched within 200 PIDs of Extension Host
+- **Process tree filter**: only include descendants of the active Antigravity main process, excluding Obsidian and other Electron apps from the dashboard
+- **Dashboard fix**: eliminated white screen on open by pre-fetching scan data before creating WebView
+- **Startup fix**: removed blocking `execSync` call from `registerSelf()` that caused UI hangs
+
 ### v0.3.0
 
 - **Performance**: Dashboard refresh reduced from approximately 9s to approximately 380ms
