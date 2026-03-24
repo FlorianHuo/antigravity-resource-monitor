@@ -34,6 +34,9 @@ const SPARKLINE_MAX_SAMPLES = 20;
 // Braille sparkline: each character encodes 2 data points (left + right column)
 // Dot layout (top to bottom): 1,2,3,7 (left)  4,5,6,8 (right)
 const BRAILLE_BASE = 0x2800;
+const COLD_START_THRESHOLD_MS = 4 * 60 * 60 * 1000; // 4 hours
+const RELOAD_COOLDOWN_MS = 5 * 60 * 1000; // 5 min after reload
+const RELOAD_DELAY_MS = 60 * 1000; // Wait 60s for indexing to finish
 
 const REGISTRY_PATH = path.join(os.homedir(), '.gemini', 'antigravity', '.resource-monitor-registry.json');
 
@@ -49,6 +52,7 @@ interface RegistryEntry {
     pid: number;
     rendererPid?: number;
     timestamp: number;
+    lastReloaded?: number;
 }
 
 interface Registry {
@@ -1208,6 +1212,52 @@ function generateSparkline(history: number[]): string {
 }
 
 // ============================================================
+// Auto-reload on cold start
+// ============================================================
+
+// language_server_macos_arm leaks memory during initial file indexing.
+// When opening a workspace that hasn't been used in a while, we wait
+// for indexing to complete (60s), then automatically reload the window.
+// The restarted language_server uses cached indexes and doesn't leak.
+// A 5-minute cooldown prevents infinite reload loops.
+function scheduleAutoReloadIfCold(): void {
+    try {
+        const folders = vscode.workspace.workspaceFolders;
+        if (!folders || folders.length === 0) { return; }
+        const folderName = folders[0].name;
+        const registry = readRegistry();
+        const entry = registry.entries[folderName];
+        const now = Date.now();
+
+        // Check cooldown: skip if we just reloaded
+        if (entry?.lastReloaded && (now - entry.lastReloaded) < RELOAD_COOLDOWN_MS) {
+            return;
+        }
+
+        // Check if cold start
+        const isCold = !entry || (now - entry.timestamp) > COLD_START_THRESHOLD_MS;
+        if (!isCold) { return; }
+
+        // Schedule delayed reload
+        setTimeout(() => {
+            try {
+                // Mark as reloaded BEFORE reloading to prevent loop
+                const reg = readRegistry();
+                if (!reg.entries[folderName]) {
+                    reg.entries[folderName] = {
+                        folderName, openEditors: [], customLabel: '',
+                        detectedTitle: '', pid: process.pid, timestamp: now,
+                    };
+                }
+                reg.entries[folderName].lastReloaded = Date.now();
+                writeRegistry(reg);
+                vscode.commands.executeCommand('workbench.action.reloadWindow');
+            } catch { /* swallow */ }
+        }, RELOAD_DELAY_MS);
+    } catch { /* never crash activation */ }
+}
+
+// ============================================================
 // Activation
 // ============================================================
 
@@ -1223,6 +1273,7 @@ export function activate(context: vscode.ExtensionContext): void {
     // Register self immediately and when editors change
     registerSelf();
     refreshTopMemCache(); // Eagerly populate top MEM cache for accurate dashboard
+    scheduleAutoReloadIfCold();
     const registryInterval = setInterval(registerSelf, 30000);
     const editorListener = vscode.window.onDidChangeActiveTextEditor(() => registerSelf());
 
