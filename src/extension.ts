@@ -47,6 +47,7 @@ interface RegistryEntry {
     customLabel: string;
     detectedTitle: string;
     pid: number;
+    rendererPid?: number;
     timestamp: number;
 }
 
@@ -70,14 +71,17 @@ interface ProcessInfo {
     ppid: number;
     rssKB: number;
     memKB: number;
+    peakMemKB?: number;
     cpu: number;
     command: string;
+    startTime?: number; // epoch seconds from lstart
 }
 
 interface ProcessListItem {
     pid: number;
     type: string;
     memKB: number;
+    peakMemKB?: number;
     cpu: number;
 }
 
@@ -282,6 +286,7 @@ function registerSelf(): void {
         }
 
         const existing = registry.entries[folderName];
+
         registry.entries[folderName] = {
             folderName,
             openEditors: openEditors.slice(0, 5),
@@ -423,35 +428,68 @@ async function getSystemMemoryInfo(): Promise<SystemMemoryInfo | null> {
     catch { return null; }
 }
 
-/**
- * Get per-process memory footprint (matches Activity Monitor's "Memory" column)
- * using the macOS `footprint` tool. Falls back to RSS if footprint is unavailable.
- * @param pids - Array of PIDs to query
- * @returns PID -> footprint in KB
- */
-async function getFootprints(pids: number[]): Promise<Map<number, number>> {
-    const result = new Map<number, number>();
-    if (pids.length === 0 || process.platform !== 'darwin') {
-        return result;
-    }
+interface TopMemInfo {
+    currentKB: number;
+    peakKB: number;
+}
+
+// Background cache for top-based memory data.
+// `footprint` hangs on language_server processes, so we use `top -l 1`
+// which reports MEM (matches Activity Monitor) and never hangs.
+// The cache refreshes asynchronously so the dashboard is never blocked.
+const topMemCache = new Map<number, TopMemInfo>();
+let topCacheTime = 0;
+let topCacheRefreshing = false;
+const TOP_CACHE_TTL_MS = 15_000;
+
+function parseTopMem(s: string): number {
+    const m = s.match(/^([\d.]+)(K|M|G)$/);
+    if (!m) { return 0; }
+    const v = parseFloat(m[1]);
+    if (m[2] === 'G') { return Math.round(v * 1024 * 1024); }
+    if (m[2] === 'M') { return Math.round(v * 1024); }
+    return Math.round(v);
+}
+
+async function refreshTopMemCache(): Promise<void> {
+    if (topCacheRefreshing || process.platform !== 'darwin') { return; }
+    topCacheRefreshing = true;
     try {
-        // Build space-separated PID args for footprint command
-        const pidArgs = pids.join(' ');
-        const raw = await execAsync(`footprint ${pidArgs} 2>/dev/null`, 5000);
-        // Parse lines like: "language_server_macos_arm [86654]: 64-bit    Footprint: 230 MB"
-        const regex = /\[(\d+)\].*?Footprint:\s*([\d.]+)\s*(KB|MB|GB)/g;
-        let match;
-        while ((match = regex.exec(raw)) !== null) {
-            const pid = parseInt(match[1], 10);
-            const value = parseFloat(match[2]);
-            const unit = match[3];
-            let kb = value;
-            if (unit === 'MB') { kb = value * 1024; }
-            else if (unit === 'GB') { kb = value * 1024 * 1024; }
-            result.set(pid, Math.round(kb));
+        const raw = await execAsync('top -l 1 -stats pid,mem -n 500 2>/dev/null', 12000);
+        for (const line of raw.split('\n')) {
+            const m = line.trim().match(/^(\d+)\s+([\d.]+[KMG])\s*$/);
+            if (!m) { continue; }
+            const pid = parseInt(m[1], 10);
+            const memKB = parseTopMem(m[2]);
+            if (memKB === 0) { continue; }
+            const existing = topMemCache.get(pid);
+            if (existing) {
+                existing.currentKB = memKB;
+                existing.peakKB = Math.max(existing.peakKB, memKB);
+            } else {
+                topMemCache.set(pid, { currentKB: memKB, peakKB: memKB });
+            }
         }
+        topCacheTime = Date.now();
+    } catch { /* top failed, keep stale cache */ }
+    finally { topCacheRefreshing = false; }
+}
+
+/**
+ * Get per-process memory (matches Activity Monitor MEM column) via cached
+ * `top` data. Returns immediately with cached data; triggers a background
+ * refresh if the cache is stale. Never blocks the caller.
+ */
+function getTopMem(pids: number[]): Map<number, TopMemInfo> {
+    const result = new Map<number, TopMemInfo>();
+    // Trigger background refresh if stale (fire-and-forget)
+    if (Date.now() - topCacheTime > TOP_CACHE_TTL_MS) {
+        refreshTopMemCache();
     }
-    catch { /* footprint tool failed, caller will use RSS fallback */ }
+    for (const pid of pids) {
+        const info = topMemCache.get(pid);
+        if (info) { result.set(pid, info); }
+    }
     return result;
 }
 
@@ -496,28 +534,96 @@ async function scanWorkspaces(): Promise<ScanResult> {
     const registry = readRegistry();
 
     try {
-        // Single shell command to get process list (RSS as memory metric)
-        // Note: footprint is omitted because it requires same-user permission for
-        // each target PID, and most Antigravity processes are inaccessible, causing
-        // the command to hang for 9+ seconds. RSS is a good-enough approximation.
+        // Parse ps with lstart for time-correlation of Renderer/Plugin processes.
+        // Format: PID PPID RSS %CPU LSTART(day month dd hh:mm:ss yyyy) COMMAND
+        // Timeout increased to 6s because under heavy memory pressure (12+ GB swap)
+        // even basic commands like ps can be slow.
         const raw = await execAsync(
-            'ps -eo pid,ppid,rss,pcpu,command | grep -i Antigravity | grep -v grep',
-            3000
+            'ps -eo pid,ppid,rss,pcpu,lstart,command | grep -i Antigravity | grep -v grep',
+            6000
         );
 
-        const allProcs: ProcessInfo[] = [];
+        const MONTHS: Record<string, number> = {
+            Jan:0,Feb:1,Mar:2,Apr:3,May:4,Jun:5,Jul:6,Aug:7,Sep:8,Oct:9,Nov:10,Dec:11
+        };
+        function parseLstart(dayOfWeek: string, month: string, day: string, time: string, year: string): number {
+            const [h, m, s] = time.split(':').map(Number);
+            const mon = MONTHS[month] ?? 0;
+            return new Date(parseInt(year), mon, parseInt(day), h, m, s).getTime() / 1000;
+        }
+
+        const allRawProcs: ProcessInfo[] = [];
         for (const line of raw.split('\n')) {
             if (line.trim() === '') { continue; }
-            const m = line.trim().match(/^(\d+)\s+(\d+)\s+(\d+)\s+([\d.]+)\s+(.+)$/);
+            // PID PPID RSS CPU DAY MONTH DD HH:MM:SS YYYY COMMAND
+            const m = line.trim().match(
+                /^(\d+)\s+(\d+)\s+(\d+)\s+([\d.]+)\s+(\w+)\s+(\w+)\s+(\d+)\s+([\d:]+)\s+(\d{4})\s+(.+)$/
+            );
             if (!m) { continue; }
-            allProcs.push({
+            allRawProcs.push({
                 pid: parseInt(m[1], 10),
                 ppid: parseInt(m[2], 10),
                 rssKB: parseInt(m[3], 10),
                 memKB: parseInt(m[3], 10),
                 cpu: parseFloat(m[4]),
-                command: m[5],
+                startTime: parseLstart(m[5], m[6], m[7], m[8], m[9]),
+                command: m[10],
             });
+        }
+
+        // Filter to only Antigravity process tree.
+        // The grep catches processes from other Electron apps (e.g. Obsidian)
+        // if they have "antigravity" anywhere in their command line. We identify
+        // the Antigravity main process (PPID=1, not a helper/renderer/gpu) and
+        // keep only its descendants (depth 2: main -> helpers -> workers).
+        // NOTE: there may be multiple stale/zombie main processes from crashed
+        // instances. Pick the one with the most children (= active instance).
+        const mainCandidates = allRawProcs.filter(p =>
+            p.ppid === 1 && !p.command.includes('--type=')
+            && p.command.includes('Antigravity.app')
+        );
+        let mainProc: ProcessInfo | undefined;
+        let maxChildren = -1;
+        for (const mc of mainCandidates) {
+            const childCount = allRawProcs.filter(p => p.ppid === mc.pid).length;
+            if (childCount > maxChildren) {
+                maxChildren = childCount;
+                mainProc = mc;
+            }
+        }
+        let allProcs: ProcessInfo[];
+        if (mainProc) {
+            const mainPid = mainProc.pid;
+            const validPids = new Set<number>([mainPid]);
+            // Depth 1: direct children of main
+            for (const p of allRawProcs) {
+                if (p.ppid === mainPid) { validPids.add(p.pid); }
+            }
+            // Depth 2: grandchildren (lang_server, workers under ext hosts)
+            for (const p of allRawProcs) {
+                if (validPids.has(p.ppid)) { validPids.add(p.pid); }
+            }
+            allProcs = allRawProcs.filter(p => validPids.has(p.pid));
+        } else {
+            allProcs = allRawProcs;
+        }
+
+        // Use top MEM data for language_server processes to capture leaked memory
+        // that is compressed/swapped and invisible to RSS. Without this, a
+        // language_server leaking 9 GB appears as only ~100 MB via RSS.
+        // getTopMem() is synchronous (reads from cache) and never blocks.
+        const lsPids = allProcs
+            .filter(p => p.command.includes('language_server'))
+            .map(p => p.pid);
+        if (lsPids.length > 0) {
+            const topMem = getTopMem(lsPids);
+            for (const p of allProcs) {
+                const tm = topMem.get(p.pid);
+                if (tm) {
+                    if (tm.currentKB > p.rssKB) { p.memKB = tm.currentKB; }
+                    if (tm.peakKB > p.memKB) { p.peakMemKB = tm.peakKB; }
+                }
+            }
         }
 
         const wsToExtHost = new Map<string, number>();
@@ -574,13 +680,80 @@ async function scanWorkspaces(): Promise<ScanResult> {
                     else if (p.command.includes('tsserver')) { type = 'TS Server'; }
                     else if (p.command.includes('jsonServerMain')) { type = 'JSON Server'; }
                     else if (p.command.includes('pyrefly') || p.command.includes('pyre')) { type = 'Pyre'; }
-                    group.processList.push({ pid: p.pid, type, memKB: p.memKB, cpu: p.cpu });
-                    group.totalMemoryKB += p.memKB;
+                    group.processList.push({ pid: p.pid, type, memKB: p.memKB, peakMemKB: p.peakMemKB, cpu: p.cpu });
+                    group.totalMemoryKB += p.peakMemKB || p.memKB;
                     assignedPids.add(p.pid);
                 }
             }
 
             workspaces.push(group);
+        }
+
+        // Second pass: attribute Renderer and sibling Plugin processes to
+        // workspaces using a 3-phase matching algorithm.
+        //
+        // KEY INSIGHT: Window Renderers are created at startup (PID near Main)
+        // and persist through Reload Window. After reload, new ExtHosts get
+        // new PIDs far from the original Renderers. Dynamic Renderers (WebView,
+        // panels) are created later with higher PIDs near their ExtHosts.
+        //
+        // Phase A: Startup Renderers (PID within 100 of Main) -> window Renderers
+        //          Take the N largest (N = workspace count), match by PID order.
+        // Phase B: Dynamic Renderers (all others) -> nearest ExtHost by PID.
+        // Phase C: Sibling Plugin processes -> nearest ExtHost within 200 PIDs.
+
+        const mainPpid = mainProc ? mainProc.pid : 0;
+        const sameParentRenderers = allProcs.filter(
+            p => !assignedPids.has(p.pid) && p.command.includes('--type=renderer') && p.ppid === mainPpid
+        );
+
+        // Phase A: identify startup Renderers and assign to workspaces
+        const startupRenderers = sameParentRenderers
+            .filter(r => Math.abs(r.pid - mainPpid) <= 100)
+            .sort((a, b) => b.memKB - a.memKB); // Largest first
+        const windowRenderers = startupRenderers.slice(0, workspaces.length);
+        const sortedWindowRenderers = [...windowRenderers].sort((a, b) => a.pid - b.pid);
+        const sortedWs = [...workspaces].sort((a, b) => a.extHostPid - b.extHostPid);
+
+        for (let i = 0; i < sortedWindowRenderers.length && i < sortedWs.length; i++) {
+            const r = sortedWindowRenderers[i];
+            const group = sortedWs[i];
+            group.processList.push({ pid: r.pid, type: 'Renderer', memKB: r.memKB, cpu: r.cpu });
+            group.totalMemoryKB += r.memKB;
+            assignedPids.add(r.pid);
+        }
+
+        // Phase B: dynamic Renderers -> nearest workspace ExtHost by PID
+        for (const group of sortedWs) {
+            let bestRenderer: ProcessInfo | undefined;
+            let bestDist = Infinity;
+            for (const r of sameParentRenderers) {
+                if (assignedPids.has(r.pid)) { continue; }
+                const dist = Math.abs(r.pid - group.extHostPid);
+                if (dist < bestDist) {
+                    bestDist = dist;
+                    bestRenderer = r;
+                }
+            }
+            if (bestRenderer) {
+                group.processList.push({ pid: bestRenderer.pid, type: 'Renderer', memKB: bestRenderer.memKB, cpu: bestRenderer.cpu });
+                group.totalMemoryKB += bestRenderer.memKB;
+                assignedPids.add(bestRenderer.pid);
+            }
+        }
+
+        // Phase C: sibling Plugin processes (same parent, within 200 PIDs)
+        for (const group of sortedWs) {
+            for (const p of allProcs) {
+                if (assignedPids.has(p.pid)) { continue; }
+                if (p.ppid !== mainPpid) { continue; }
+                if (!p.command.includes('node.mojom.NodeService')) { continue; }
+                if (Math.abs(p.pid - group.extHostPid) <= 200) {
+                    group.processList.push({ pid: p.pid, type: 'Plugin', memKB: p.memKB, cpu: p.cpu });
+                    group.totalMemoryKB += p.memKB;
+                    assignedPids.add(p.pid);
+                }
+            }
         }
 
         let sharedMemoryKB = 0;
@@ -850,9 +1023,14 @@ function generateDashboardShell(): string {
                 for (var j = 0; j < ws.processList.length; j++) {
                     var p = ws.processList[j];
                     var pMem = p.memKB >= 1024*1024 ? (p.memKB/(1024*1024)).toFixed(1)+' GB' : (p.memKB/1024).toFixed(0)+' MB';
+                    var peakStr = '';
+                    if (p.peakMemKB && p.peakMemKB > p.memKB * 1.5) {
+                        var peakFmt = p.peakMemKB >= 1024*1024 ? (p.peakMemKB/(1024*1024)).toFixed(1)+' GB' : (p.peakMemKB/1024).toFixed(0)+' MB';
+                        peakStr = ' <span style="color:#f44747;opacity:0.7;font-size:11px">(peak ' + peakFmt + ')</span>';
+                    }
                     procHtml += '<div class="proc-row">'
                         + '<span class="proc-type">' + escapeHtml(p.type) + '</span>'
-                        + '<span class="proc-mem">' + pMem + '</span>'
+                        + '<span class="proc-mem">' + pMem + peakStr + '</span>'
                         + '<span class="proc-cpu">' + p.cpu.toFixed(1) + '%</span>'
                         + '<span class="proc-pid">PID ' + p.pid + '</span>'
                         + '<button class="kill-btn" data-action="kill" data-pid="' + p.pid + '" title="Kill">x</button>'
@@ -962,11 +1140,15 @@ function generateDashboardShell(): string {
 async function sendDashboardData(panel: vscode.WebviewPanel): Promise<void> {
     // Run data gathering in parallel for faster response
     const [data, sysInfo] = await Promise.all([scanWorkspaces(), getSystemMemoryInfo()]);
-    panel.webview.postMessage({
-        command: 'updateData',
-        scan: data,
-        sysInfo: sysInfo,
-    });
+    // Only push if scan returned real data; skip empty results to preserve
+    // the last known good state (avoids dashboard flashing to "0 workspaces")
+    if (data.processCount > 0) {
+        panel.webview.postMessage({
+            command: 'updateData',
+            scan: data,
+            sysInfo: sysInfo,
+        });
+    }
 }
 
 // ============================================================
@@ -1040,6 +1222,7 @@ export function activate(context: vscode.ExtensionContext): void {
 
     // Register self immediately and when editors change
     registerSelf();
+    refreshTopMemCache(); // Eagerly populate top MEM cache for accurate dashboard
     const registryInterval = setInterval(registerSelf, 30000);
     const editorListener = vscode.window.onDidChangeActiveTextEditor(() => registerSelf());
 
@@ -1130,7 +1313,7 @@ export function activate(context: vscode.ExtensionContext): void {
 
         // Send pre-fetched data immediately (no waiting for WebView JS init or 5s timer)
         dataPromise.then(([scan, sysInfo]) => {
-            if (dashboardPanel) {
+            if (dashboardPanel && scan.processCount > 0) {
                 dashboardPanel.webview.postMessage({ command: 'updateData', scan, sysInfo });
             }
         }).catch(() => { /* swallow, auto-refresh will retry */ });
