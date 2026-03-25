@@ -998,19 +998,32 @@ function generateDashboardShell(): string {
     }
     .toggle-switch input:checked + .toggle-track { background: var(--accent); }
     .toggle-switch input:checked + .toggle-track::after { transform: translateX(16px); }
-    /* Number input */
+    /* Stepper control */
     .settings-input-row {
-        display: flex; align-items: center; gap: 6px; margin-top: 6px;
+        display: flex; align-items: center; gap: 8px; margin-top: 8px;
     }
-    .settings-input-row input[type="number"] {
-        width: 64px; padding: 4px 8px; font-size: 12px;
-        background: var(--card-bg); color: var(--fg);
-        border: 1px solid var(--border); border-radius: 4px;
-        text-align: center; outline: none;
-        transition: border-color 0.15s;
+    .stepper {
+        display: flex; align-items: stretch; border: 1px solid var(--border);
+        border-radius: 4px; overflow: hidden; height: 28px;
     }
-    .settings-input-row input[type="number"]:focus { border-color: var(--accent); }
-    .settings-input-row .unit { font-size: 11px; opacity: 0.5; }
+    .stepper-btn {
+        width: 28px; display: flex; align-items: center; justify-content: center;
+        background: var(--card-bg); color: var(--fg); border: none; cursor: pointer;
+        font-size: 14px; opacity: 0.6; transition: all 0.15s;
+        user-select: none;
+    }
+    .stepper-btn:hover { opacity: 1; background: var(--hover); }
+    .stepper-btn:active { opacity: 0.4; }
+    .stepper-val {
+        width: 44px; text-align: center; font-size: 12px;
+        background: transparent; color: var(--fg); border: none;
+        border-left: 1px solid var(--border); border-right: 1px solid var(--border);
+        outline: none; font-variant-numeric: tabular-nums;
+        -moz-appearance: textfield;
+    }
+    .stepper-val::-webkit-outer-spin-button,
+    .stepper-val::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+    .settings-input-row .unit { font-size: 11px; opacity: 0.4; }
     .settings-saved {
         font-size: 11px; color: #4ec44e; opacity: 0; transition: opacity 0.3s;
         margin-left: 8px;
@@ -1057,7 +1070,11 @@ function generateDashboardShell(): string {
                 <div class="settings-item-label">Memory Threshold</div>
                 <div class="settings-item-desc">Terminate the language server when memory usage exceeds this value</div>
                 <div class="settings-input-row">
-                    <input type="number" id="cfg-threshold" min="0.5" max="16" step="0.5">
+                    <div class="stepper">
+                        <button class="stepper-btn" data-target="cfg-threshold" data-delta="-0.5">&minus;</button>
+                        <input type="number" class="stepper-val" id="cfg-threshold" min="0.5" max="16" step="0.5">
+                        <button class="stepper-btn" data-target="cfg-threshold" data-delta="0.5">+</button>
+                    </div>
                     <span class="unit">GB</span>
                 </div>
             </div>
@@ -1065,7 +1082,11 @@ function generateDashboardShell(): string {
                 <div class="settings-item-label">Check Interval</div>
                 <div class="settings-item-desc">How often to poll memory usage</div>
                 <div class="settings-input-row">
-                    <input type="number" id="cfg-interval" min="1" max="60" step="1">
+                    <div class="stepper">
+                        <button class="stepper-btn" data-target="cfg-interval" data-delta="-1">&minus;</button>
+                        <input type="number" class="stepper-val" id="cfg-interval" min="1" max="60" step="1">
+                        <button class="stepper-btn" data-target="cfg-interval" data-delta="1">+</button>
+                    </div>
                     <span class="unit">seconds</span>
                 </div>
             </div>
@@ -1073,7 +1094,11 @@ function generateDashboardShell(): string {
                 <div class="settings-item-label">Status Bar Refresh</div>
                 <div class="settings-item-desc">How often to update the status bar memory indicator</div>
                 <div class="settings-input-row">
-                    <input type="number" id="cfg-statusbar" min="1" max="30" step="1">
+                    <div class="stepper">
+                        <button class="stepper-btn" data-target="cfg-statusbar" data-delta="-1">&minus;</button>
+                        <input type="number" class="stepper-val" id="cfg-statusbar" min="1" max="30" step="1">
+                        <button class="stepper-btn" data-target="cfg-statusbar" data-delta="1">+</button>
+                    </div>
                     <span class="unit">seconds</span>
                 </div>
             </div>
@@ -1277,6 +1302,21 @@ function generateDashboardShell(): string {
             el.classList.add('show');
             setTimeout(function() { el.classList.remove('show'); }, 1500);
         }
+
+        // Stepper button clicks
+        document.querySelectorAll('.stepper-btn').forEach(function(btn) {
+            btn.addEventListener('click', function(e) {
+                e.stopPropagation();
+                var input = document.getElementById(btn.dataset.target);
+                var delta = parseFloat(btn.dataset.delta);
+                var val = parseFloat(input.value) + delta;
+                var min = parseFloat(input.min), max = parseFloat(input.max);
+                if (val >= min && val <= max) {
+                    input.value = val % 1 === 0 ? val : val.toFixed(1);
+                    input.dispatchEvent(new Event('change'));
+                }
+            });
+        });
 
         ['cfg-enabled','cfg-threshold','cfg-interval','cfg-statusbar'].forEach(function(id) {
             document.getElementById(id).addEventListener('change', function() {
