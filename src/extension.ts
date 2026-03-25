@@ -1288,8 +1288,8 @@ function startLeakWatchdog(): void {
             }
 
             if (maxMemKB > LEAK_THRESHOLD_KB) {
-                clearInterval(watchdogInterval);
-                // Mark as reloaded to prevent loop
+                lastReloaded = Date.now(); // Activate cooldown
+                // Persist reload timestamp
                 try {
                     const folders = vscode.workspace.workspaceFolders;
                     if (folders && folders.length > 0) {
