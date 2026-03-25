@@ -1502,7 +1502,7 @@ function startLeakWatchdog(statusItem: vscode.StatusBarItem): void {
                 // Flash status bar for 2 seconds (updateStatusBar skips during flash)
                 leakFlashUntil = Date.now() + 2000;
                 statusItem.text = `$(shield) Leak killed`;
-                statusItem.color = '#2ea043';
+                statusItem.color = '#00e676';
                 statusItem.backgroundColor = undefined;
             }
         } catch { cachedPid = 0; }
