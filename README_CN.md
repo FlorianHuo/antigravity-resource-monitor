@@ -18,6 +18,8 @@
 
 Antigravity 的 language server 在开启新的 AI 对话时，可能出现**严重的内存泄漏**。单次对话就能吃掉 **10+ GB** 内存，导致整个系统卡死。目前没有任何内置保护机制。
 
+<p align="center"><img src="assets/problem.gif" width="600" alt="没有 watchdog 时内存泄漏"></p>
+
 ## 方案
 
 这个扩展在后台运行一个轻量级监控：
@@ -27,6 +29,8 @@ Antigravity 的 language server 在开启新的 AI 对话时，可能出现**严
 3. **恢复** -- Antigravity 自动重启新的 server，AI 功能继续可用
 
 全自动，无需任何手动操作。
+
+<p align="center"><img src="assets/fix.gif" width="600" alt="Watchdog 自动清理泄漏"></p>
 
 ---
 

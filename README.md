@@ -18,6 +18,8 @@
 
 Antigravity's language server may develop **severe memory leaks** when starting new AI conversations. A single conversation can consume **10+ GB** of memory, freezing your entire system. There is no built-in protection.
 
+<p align="center"><img src="assets/problem.gif" width="600" alt="Memory leak without watchdog"></p>
+
 ## The Solution
 
 This extension runs a lightweight background monitor that:
@@ -27,6 +29,8 @@ This extension runs a lightweight background monitor that:
 3. **Lets Antigravity recover** -- it seamlessly restarts a fresh server, your AI features continue working
 
 All fully automatic. Zero user intervention required.
+
+<p align="center"><img src="assets/fix.gif" width="600" alt="Watchdog auto-kill in action"></p>
 
 ---
 
@@ -44,7 +48,7 @@ All fully automatic. Zero user intervention required.
 
 > Real-time per-window memory in the status bar, color-coded by severity.
 
-- **Green** < 1 GB &middot; **Yellow** 1-2 GB &middot; **Red** > 2 GB
+- **Green** < 2 GB &middot; **Yellow** 2-4 GB &middot; **Red** > 4 GB
 - System memory pressure indicator (Normal / Warn / Critical)
 - Braille sparkline trend in tooltip
 
