@@ -971,20 +971,35 @@ function generateDashboardShell(): string {
     .settings-toggle .chevron { transition: transform 0.2s; display: inline-block; }
     .settings-toggle .chevron.open { transform: rotate(90deg); }
     .settings-grid {
-        display: grid; grid-template-columns: 1fr auto;
-        gap: 8px 16px; align-items: center;
-        padding: 12px; margin-top: 8px;
+        display: grid; grid-template-columns: 1fr 90px;
+        align-items: center;
+        margin-top: 8px;
         background: var(--card-bg); border: 1px solid var(--border); border-radius: 6px;
+        overflow: hidden;
     }
     .settings-grid.hidden { display: none; }
-    .settings-grid label { font-size: 12px; }
-    .settings-grid .desc { font-size: 11px; opacity: 0.45; grid-column: 1 / -1; margin-top: -4px; margin-bottom: 4px; }
-    .settings-grid input[type="number"] {
-        width: 80px; padding: 3px 6px; font-size: 12px;
-        background: var(--bg); color: var(--fg); border: 1px solid var(--border);
-        border-radius: 3px; text-align: right;
+    .settings-row {
+        display: contents;
     }
-    .settings-grid input[type="checkbox"] { width: 16px; height: 16px; cursor: pointer; }
+    .settings-row + .settings-row label,
+    .settings-row + .settings-row .cfg-control { border-top: 1px solid var(--border); }
+    .settings-row label {
+        font-size: 12px; padding: 10px 12px;
+    }
+    .settings-row .label-desc {
+        display: block; font-size: 10px; opacity: 0.4; margin-top: 2px; font-weight: normal;
+    }
+    .cfg-control {
+        padding: 10px 12px; display: flex; justify-content: center; align-items: center;
+    }
+    .settings-grid input[type="number"] {
+        width: 70px; padding: 4px 6px; font-size: 12px;
+        background: var(--bg); color: var(--fg); border: 1px solid var(--border);
+        border-radius: 3px; text-align: center;
+    }
+    .settings-grid input[type="checkbox"] {
+        width: 16px; height: 16px; cursor: pointer;
+    }
     .settings-saved {
         font-size: 11px; color: #4ec44e; opacity: 0; transition: opacity 0.3s;
         margin-left: 8px;
@@ -1015,17 +1030,22 @@ function generateDashboardShell(): string {
             <span class="settings-saved" id="settings-saved">Saved</span>
         </button>
         <div class="settings-grid hidden" id="settings-panel">
-            <label>Leak monitor enabled</label>
-            <input type="checkbox" id="cfg-enabled">
-
-            <label>Memory threshold (MB)</label>
-            <input type="number" id="cfg-threshold" min="512" max="16384" step="256">
-
-            <label>Check interval (seconds)</label>
-            <input type="number" id="cfg-interval" min="1" max="60" step="1">
-
-            <label>Status bar refresh (seconds)</label>
-            <input type="number" id="cfg-statusbar" min="1" max="30" step="1">
+            <div class="settings-row">
+                <label>Leak monitor<span class="label-desc">Auto-kill leaked language server processes</span></label>
+                <div class="cfg-control"><input type="checkbox" id="cfg-enabled"></div>
+            </div>
+            <div class="settings-row">
+                <label>Memory threshold<span class="label-desc">Kill when exceeding this limit</span></label>
+                <div class="cfg-control"><input type="number" id="cfg-threshold" min="0.5" max="16" step="0.5"> GB</div>
+            </div>
+            <div class="settings-row">
+                <label>Check interval<span class="label-desc">How often to check memory</span></label>
+                <div class="cfg-control"><input type="number" id="cfg-interval" min="1" max="60" step="1"> s</div>
+            </div>
+            <div class="settings-row">
+                <label>Status bar refresh<span class="label-desc">Update frequency for status bar</span></label>
+                <div class="cfg-control"><input type="number" id="cfg-statusbar" min="1" max="30" step="1"> s</div>
+            </div>
         </div>
     </div>
     <script nonce="${nonce}">
@@ -1232,7 +1252,7 @@ function generateDashboardShell(): string {
                 vscode.postMessage({
                     command: 'updateSettings',
                     enabled: document.getElementById('cfg-enabled').checked,
-                    thresholdMB: parseInt(document.getElementById('cfg-threshold').value) || 2048,
+                    thresholdMB: Math.round((parseFloat(document.getElementById('cfg-threshold').value) || 2) * 1024),
                     checkInterval: parseInt(document.getElementById('cfg-interval').value) || 5,
                     statusBarInterval: parseInt(document.getElementById('cfg-statusbar').value) || 3
                 });
@@ -1245,7 +1265,7 @@ function generateDashboardShell(): string {
             var msg = event.data;
             if (msg.command === 'settings') {
                 document.getElementById('cfg-enabled').checked = msg.enabled;
-                document.getElementById('cfg-threshold').value = msg.thresholdMB;
+                document.getElementById('cfg-threshold').value = (msg.thresholdMB / 1024).toFixed(1).replace(/\.0$/, '');
                 document.getElementById('cfg-interval').value = msg.checkInterval;
                 document.getElementById('cfg-statusbar').value = msg.statusBarInterval;
             } else if (msg.command === 'settingsSaved') {
