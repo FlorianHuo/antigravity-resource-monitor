@@ -1447,19 +1447,40 @@ function startLeakWatchdog(statusItem: vscode.StatusBarItem): void {
             const cfg = getConfig();
             if (!cfg.watchdogEnabled) { return; }
 
-            // Skip if we just killed (cache might still have stale data)
-            if (Date.now() - lastKillTime < 10_000) { return; }
+            // Skip if we just killed (wait for process to respawn)
+            if (Date.now() - lastKillTime < 5_000) { return; }
 
             const myPid = process.pid;
             // Refresh PID cache every 30s or if stale
             if (!cachedPid || Date.now() - cacheTime > 30_000) {
+                cachedPid = 0; // Reset before search
+                // Use process tree: find language_server that is a descendant of this ext host
                 const raw = await execAsync(
-                    `ps -eo pid,command | grep language_server_macos_arm | grep -v grep`,
+                    `ps -eo pid,ppid,command | grep language_server_macos_arm | grep -v grep`,
                     2000
                 );
+                // Build set of all descendant PIDs of myPid
+                const psRaw = await execAsync('ps -eo pid,ppid', 2000);
+                const children: Record<number, number[]> = {};
+                for (const line of psRaw.split('\n')) {
+                    const m = line.trim().match(/^(\d+)\s+(\d+)$/);
+                    if (!m) { continue; }
+                    const pid = parseInt(m[1], 10);
+                    const ppid = parseInt(m[2], 10);
+                    if (!children[ppid]) { children[ppid] = []; }
+                    children[ppid].push(pid);
+                }
+                const descendants = new Set<number>();
+                const queue = [myPid];
+                while (queue.length > 0) {
+                    const p = queue.pop()!;
+                    descendants.add(p);
+                    if (children[p]) { queue.push(...children[p]); }
+                }
+                // Find language_server among descendants
                 for (const line of raw.trim().split('\n')) {
                     const pid = parseInt(line.trim());
-                    if (pid > 0 && Math.abs(pid - myPid) < 500) {
+                    if (pid > 0 && descendants.has(pid)) {
                         cachedPid = pid;
                         cacheTime = Date.now();
                         break;
@@ -1476,7 +1497,7 @@ function startLeakWatchdog(statusItem: vscode.StatusBarItem): void {
                 try { process.kill(killedPid, 'SIGTERM'); } catch { /* already dead */ }
                 cachedPid = 0;
                 lastKillTime = Date.now();
-                // Remove only the killed process from cache (don't clear everything)
+                // Remove only the killed process from cache
                 topMemCache.delete(killedPid);
                 memoryHistory.length = 0;
                 // Flash status bar for 2 seconds (updateStatusBar skips during flash)
