@@ -20,13 +20,13 @@
 
 ## The Problem
 
-Antigravity's `language_server` may develop **severe memory leaks** when starting new AI conversations. A single conversation can consume **10+ GB** of memory, freezing your entire system. There is no built-in protection.
+Antigravity's language server may develop **severe memory leaks** when starting new AI conversations. A single conversation can consume **10+ GB** of memory, freezing your entire system. There is no built-in protection.
 
 ## The Solution
 
 This extension runs a lightweight background monitor that:
 
-1. **Detects** leaked `language_server` processes in real-time (via macOS `top`, matching Activity Monitor)
+1. **Detects** leaked language server processes in real-time (via macOS top, matching Activity Monitor)
 2. **Kills** the process when memory exceeds a configurable threshold (default: 2 GB)
 3. **Lets Antigravity recover** -- it seamlessly restarts a fresh server, your AI features continue working
 
@@ -38,7 +38,7 @@ All fully automatic. Zero user intervention required.
 
 ### Memory Leak Auto-fix
 
-> Background monitor checks `language_server` memory every few seconds. When it exceeds the threshold, the process is terminated gracefully. Antigravity auto-restarts a fresh server within seconds.
+> Background monitor checks language server memory every few seconds. When it exceeds the threshold, the process is terminated gracefully. Antigravity auto-restarts a fresh server within seconds.
 
 - Configurable threshold, interval, and on/off toggle
 - Subtle status bar flash on kill (shield icon + warning background, 5s)
@@ -66,11 +66,9 @@ All fully automatic. Zero user intervention required.
 
 ### Install
 
-Download the `.vsix` from [**Releases**](https://github.com/FlorianHuo/antigravity-resource-monitor/releases), then:
+Download the **.vsix** from [**Releases**](https://github.com/FlorianHuo/antigravity-resource-monitor/releases), then:
 
-```
-Cmd+Shift+P > Extensions: Install from VSIX...
-```
+> <kbd>Cmd</kbd> + <kbd>Shift</kbd> + <kbd>P</kbd> &rarr; **Extensions: Install from VSIX...**
 
 Reload the window. Done -- the leak monitor starts automatically.
 
@@ -78,9 +76,7 @@ Reload the window. Done -- the leak monitor starts automatically.
 
 When the monitor kills a leaked server, Antigravity shows error popups. To silence them:
 
-```
-Cmd+Shift+P > Resource Monitor: Apply Crash Notification Patch
-```
+> <kbd>Cmd</kbd> + <kbd>Shift</kbd> + <kbd>P</kbd> &rarr; **Resource Monitor: Apply Crash Notification Patch**
 
 Or via CLI:
 
@@ -94,27 +90,27 @@ Re-run after each Antigravity update. Use `--restore` to undo.
 
 ## Configuration
 
-Search **Resource Monitor** in Settings (`Cmd+,`):
+Search **Resource Monitor** in Settings (<kbd>Cmd</kbd> + <kbd>,</kbd>):
 
 | Setting | Default | Description |
 |---------|---------|-------------|
-| `leakWatchdog.enabled` | `true` | Enable/disable the leak monitor |
-| `leakWatchdog.thresholdMB` | `2048` | Kill threshold in MB |
-| `leakWatchdog.checkIntervalSeconds` | `5` | Check frequency |
-| `statusBar.updateIntervalSeconds` | `3` | Status bar refresh rate |
+| **leakWatchdog.enabled** | true | Enable/disable the leak monitor |
+| **leakWatchdog.thresholdMB** | 2048 | Kill threshold in MB |
+| **leakWatchdog.checkIntervalSeconds** | 5 | Check frequency |
+| **statusBar.updateIntervalSeconds** | 3 | Status bar refresh rate |
 
 ## Commands
 
 | Command | Description |
 |---------|-------------|
-| `Process Dashboard` | Open the process monitor panel |
-| `Toggle Visibility` | Show/hide the status bar indicator |
-| `Apply Crash Notification Patch` | Suppress crash popups (one-click) |
-| `Restore Original Files` | Undo the patch |
+| **Process Dashboard** | Open the process monitor panel |
+| **Toggle Visibility** | Show/hide the status bar indicator |
+| **Apply Crash Notification Patch** | Suppress crash popups (one-click) |
+| **Restore Original Files** | Undo the patch |
 
 ## Requirements
 
-- **macOS only** (uses `top`, `ps`, `memory_pressure`, `vm_stat`)
+- **macOS only** (uses top, ps, memory_pressure, vm_stat)
 - Antigravity (any recent version)
 - Python 3 (only for the optional patch)
 
@@ -133,10 +129,10 @@ npm run deploy   # Compile + install to ~/.antigravity/extensions/
 
 ### v0.4.0
 
-- Automatic memory leak detection and killing for `language_server`
+- Automatic memory leak detection and killing for language server
 - One-click crash notification + integrity warning patch
-- All settings configurable via VS Code Settings UI
-- Status bar uses `top` MEM (matches Activity Monitor)
+- All settings configurable via Settings UI
+- Status bar uses top MEM (matches Activity Monitor)
 
 ### v0.3.x
 
