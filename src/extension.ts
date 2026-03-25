@@ -1450,28 +1450,40 @@ export function activate(context: vscode.ExtensionContext): void {
                 } catch { /* ignore */ }
                 setTimeout(refreshDashboard, 1500);
             } else if (msg.command === 'closeWorkspace') {
-                // Kill ALL processes atomically in one shell command
-                // to prevent Antigravity from respawning them between kills
                 const pids = (msg.pids as string).split(',').map(Number);
-                try {
-                    execSync(`kill -9 ${pids.join(' ')} 2>/dev/null; true`, { timeout: 3000 });
-                } catch { /* some may already be dead */ }
-                // Second pass: catch any children that were missed
-                setTimeout(() => {
-                    for (const pid of pids) {
-                        try { killProcessTree(pid); } catch { /* ignore */ }
-                    }
-                }, 500);
-                // Clean up registry entry
-                try {
-                    const registry = readRegistry();
-                    if (registry.entries[msg.name]) {
-                        delete registry.entries[msg.name];
-                        writeRegistry(registry);
-                    }
-                } catch { /* ignore */ }
-                vscode.window.showInformationMessage(`Workspace "${msg.name}" closed (${pids.length} processes killed).`);
-                setTimeout(refreshDashboard, 2000);
+                const myPid = process.pid;
+                const isCurrentWorkspace = pids.includes(myPid);
+
+                if (isCurrentWorkspace) {
+                    // Closing current workspace: clean registry then close window
+                    try {
+                        const registry = readRegistry();
+                        if (registry.entries[msg.name]) {
+                            delete registry.entries[msg.name];
+                            writeRegistry(registry);
+                        }
+                    } catch { /* ignore */ }
+                    vscode.commands.executeCommand('workbench.action.closeWindow');
+                } else {
+                    // Closing another workspace: kill all processes atomically
+                    try {
+                        execSync(`kill -9 ${pids.join(' ')} 2>/dev/null; true`, { timeout: 3000 });
+                    } catch { /* some may already be dead */ }
+                    setTimeout(() => {
+                        for (const pid of pids) {
+                            try { killProcessTree(pid); } catch { /* ignore */ }
+                        }
+                    }, 500);
+                    try {
+                        const registry = readRegistry();
+                        if (registry.entries[msg.name]) {
+                            delete registry.entries[msg.name];
+                            writeRegistry(registry);
+                        }
+                    } catch { /* ignore */ }
+                    vscode.window.showInformationMessage(`Workspace "${msg.name}" closed (${pids.length} processes killed).`);
+                    setTimeout(refreshDashboard, 2000);
+                }
             } else if (msg.command === 'killZombies') {
                 const pids = (msg.pids as string).split(',').map(Number);
                 for (const pid of pids) {
