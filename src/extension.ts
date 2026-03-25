@@ -1243,25 +1243,9 @@ function generateSparkline(history: number[]): string {
 // when it exceeds the threshold. We use top instead of ps because macOS
 // compresses leaked pages, so RSS stays low while real usage is huge.
 function startLeakWatchdog(): void {
-    let lastReloaded = 0;
-
-    // Check registry for recent reload to avoid reload-on-startup loops
-    try {
-        const folders = vscode.workspace.workspaceFolders;
-        if (folders && folders.length > 0) {
-            const registry = readRegistry();
-            const entry = registry.entries[folders[0].name];
-            if (entry?.lastReloaded) { lastReloaded = entry.lastReloaded; }
-        }
-    } catch { /* ignore */ }
-
-    const watchdogInterval = setInterval(async () => {
-        // Cooldown check
-        if (Date.now() - lastReloaded < RELOAD_COOLDOWN_MS) { return; }
-
+    setInterval(async () => {
         try {
             const myPid = process.pid;
-            // Find language_server PIDs near our ExtHost
             const raw = await execAsync(
                 `ps -eo pid,command | grep language_server_macos_arm | grep -v grep`,
                 3000
@@ -1277,7 +1261,6 @@ function startLeakWatchdog(): void {
             }
             if (langServerPids.length === 0) { return; }
 
-            // Refresh top cache and check MEM for these PIDs
             await refreshTopMemCache();
             let maxMemKB = 0;
             for (const pid of langServerPids) {
@@ -1288,33 +1271,11 @@ function startLeakWatchdog(): void {
             }
 
             if (maxMemKB > LEAK_THRESHOLD_KB) {
-                lastReloaded = Date.now(); // Activate cooldown
-                // Persist reload timestamp
-                try {
-                    const folders = vscode.workspace.workspaceFolders;
-                    if (folders && folders.length > 0) {
-                        const reg = readRegistry();
-                        const fn = folders[0].name;
-                        if (reg.entries[fn]) {
-                            reg.entries[fn].lastReloaded = Date.now();
-                        } else {
-                            reg.entries[fn] = {
-                                folderName: fn, openEditors: [], customLabel: '',
-                                detectedTitle: '', pid: myPid, timestamp: Date.now(),
-                                lastReloaded: Date.now(),
-                            };
-                        }
-                        writeRegistry(reg);
-                    }
-                } catch { /* ignore */ }
-                vscode.window.showWarningMessage(
-                    `Language server leak detected (${(maxMemKB/(1024*1024)).toFixed(1)} GB). Auto-reloading...`
-                );
-                setTimeout(() => {
-                    vscode.commands.executeCommand('workbench.action.reloadWindow');
-                }, 2000);
+                for (const pid of langServerPids) {
+                    try { process.kill(pid, 'SIGKILL'); } catch { /* already dead */ }
+                }
             }
-        } catch { /* top/ps failed, skip this cycle */ }
+        } catch { /* skip this cycle */ }
     }, LEAK_CHECK_INTERVAL_MS);
 }
 
