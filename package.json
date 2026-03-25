@@ -25,10 +25,6 @@
                 "title": "Resource Monitor: Process Dashboard"
             },
             {
-                "command": "resourceMonitor.showDetails",
-                "title": "Resource Monitor: Show Memory Details"
-            },
-            {
                 "command": "resourceMonitor.toggle",
                 "title": "Resource Monitor: Toggle Visibility"
             },

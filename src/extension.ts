@@ -1490,9 +1490,6 @@ export function activate(context: vscode.ExtensionContext): void {
         });
     });
 
-    const showDetailsCmd = vscode.commands.registerCommand('resourceMonitor.showDetails', () => {
-        vscode.commands.executeCommand('resourceMonitor.showDashboard');
-    });
 
     const toggleCmd = vscode.commands.registerCommand('resourceMonitor.toggle', () => {
         isVisible = !isVisible;
@@ -1554,7 +1551,7 @@ export function activate(context: vscode.ExtensionContext): void {
 
     context.subscriptions.push(
         statusItem, editorListener,
-        showDashboardCmd, showDetailsCmd, toggleCmd, refreshCmd,
+        showDashboardCmd, toggleCmd, refreshCmd,
         applyPatchCmd, restorePatchCmd,
         { dispose: () => { clearInterval(statusBarInterval); clearInterval(registryInterval); stopDashboardAutoRefresh(); } }
     );
