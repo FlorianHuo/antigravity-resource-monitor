@@ -37,6 +37,7 @@ const BRAILLE_BASE = 0x2800;
 const LEAK_THRESHOLD_KB = 2 * 1024 * 1024; // 2 GB language_server = definitely a leak
 const LEAK_CHECK_INTERVAL_MS = 5_000; // Check every 5s
 const RELOAD_COOLDOWN_MS = 5 * 60 * 1000; // 5 min after reload
+let leakFlashUntil = 0; // Timestamp until which status bar shows kill notification
 
 const REGISTRY_PATH = path.join(os.homedir(), '.gemini', 'antigravity', '.resource-monitor-registry.json');
 
@@ -1243,7 +1244,6 @@ function startLeakWatchdog(statusItem: vscode.StatusBarItem): void {
     let cachedPid = 0;
     let cacheTime = 0;
     let lastKillTime = 0;
-    let flashTimer: ReturnType<typeof setTimeout> | undefined;
 
     setInterval(async () => {
         try {
@@ -1275,12 +1275,10 @@ function startLeakWatchdog(statusItem: vscode.StatusBarItem): void {
                 try { process.kill(cachedPid, 'SIGTERM'); } catch { /* already dead */ }
                 cachedPid = 0;
                 lastKillTime = Date.now();
-                // Flash status bar background only (no text change to avoid width shift)
-                if (flashTimer) { clearTimeout(flashTimer); }
+                // Flash status bar for 5 seconds (updateStatusBar skips during flash)
+                leakFlashUntil = Date.now() + 5000;
+                statusItem.text = `$(shield) Leak killed`;
                 statusItem.backgroundColor = new vscode.ThemeColor('statusBarItem.warningBackground');
-                flashTimer = setTimeout(() => {
-                    statusItem.backgroundColor = undefined;
-                }, 5000);
             }
         } catch { cachedPid = 0; }
     }, LEAK_CHECK_INTERVAL_MS);
@@ -1309,6 +1307,7 @@ export function activate(context: vscode.ExtensionContext): void {
     let statusBarUpdating = false;
     async function updateStatusBar(): Promise<void> {
         if (!isVisible || statusBarUpdating) { return; }
+        if (Date.now() < leakFlashUntil) { return; } // Skip during leak kill flash
         statusBarUpdating = true;
         try {
         // Use the same metric as the dashboard: ext host + children RSS
