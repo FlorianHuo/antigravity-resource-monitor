@@ -7,8 +7,9 @@ VERSION=$(node -p "require('./package.json').version")
 EXT_DIR="$HOME/.antigravity/extensions/florian.antigravity-resource-monitor-${VERSION}"
 
 echo "Deploying v${VERSION} to $EXT_DIR..."
-mkdir -p "$EXT_DIR/out"
+mkdir -p "$EXT_DIR/out" "$EXT_DIR/scripts"
 cp -f out/extension.js out/extension.js.map "$EXT_DIR/out/"
 cp -f package.json "$EXT_DIR/"
 cp -f README.md "$EXT_DIR/readme.md"
+cp -f scripts/patch_suppress_crash.py "$EXT_DIR/scripts/"
 echo "Done. Reload Antigravity window to apply changes."
