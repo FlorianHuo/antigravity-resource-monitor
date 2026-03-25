@@ -924,16 +924,25 @@ function generateDashboardShell(): string {
         padding: 1px 6px; opacity: 0.5; transition: opacity 0.15s;
     }
     .kill-btn:hover { opacity: 1; background: #f4474722; }
-    .kill-all-btn, .close-ws-btn {
+    .kill-all-btn {
         background: transparent; border: 1px solid; border-radius: 3px;
         cursor: pointer; font-size: 11px; padding: 2px 8px;
         opacity: 0; transition: opacity 0.15s;
+        color: #f44747; border-color: #f4474755;
     }
-    .kill-all-btn { color: #f44747; border-color: #f4474755; }
-    .close-ws-btn { color: #e0a030; border-color: #e0a03055; }
-    .ws-header:hover .kill-all-btn, .ws-header:hover .close-ws-btn { opacity: 0.7; }
+    .ws-header:hover .kill-all-btn { opacity: 0.7; }
     .kill-all-btn:hover { opacity: 1 !important; background: #f4474722; }
-    .close-ws-btn:hover { opacity: 1 !important; background: #e0a03022; }
+    .ws-card-actions {
+        display: flex; justify-content: flex-end; padding: 4px 12px 0;
+        opacity: 0; transition: opacity 0.15s;
+    }
+    .ws-card:hover .ws-card-actions { opacity: 1; }
+    .close-ws-btn {
+        background: transparent; border: none; cursor: pointer;
+        font-size: 11px; padding: 2px 6px; color: var(--fg);
+        opacity: 0.5; transition: opacity 0.15s;
+    }
+    .close-ws-btn:hover { opacity: 1; }
     .shared-row {
         display: flex; justify-content: space-between; padding: 8px 12px;
         font-size: 12px; opacity: 0.6; margin-top: 4px;
@@ -1207,9 +1216,11 @@ function generateDashboardShell(): string {
                     + '<div class="ws-header">'
                     + '<div class="ws-info"><div class="ws-name">' + escapeHtml(ws.name) + '</div>' + subtitleHtml + '</div>'
                     + '<div class="ws-stats"><span class="ws-mem">' + memStr + '</span><span class="ws-pct">' + memPct + '%</span>'
-                    + '<button class="close-ws-btn" data-action="closeWorkspace" data-pids="' + allWsPids + '" data-name="' + escapeHtml(ws.name) + '" title="Close workspace (kill all processes)">Close</button>'
                     + '</div></div>'
                     + '<div class="ws-bar-track"><div class="ws-bar-fill" style="width:' + barWidth + '%;background:' + barColor + '"></div></div>'
+                    + '<div class="ws-card-actions">'
+                    + '<button class="close-ws-btn" data-action="closeWorkspace" data-pids="' + allWsPids + '" data-name="' + escapeHtml(ws.name) + '" title="Close workspace (kill all processes)">Close Workspace</button>'
+                    + '</div>'
                     + '<div class="ws-details' + (isExpanded ? '' : ' hidden') + '">' + procHtml + '</div>'
                     + '</div>';
             }
