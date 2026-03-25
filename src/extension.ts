@@ -1701,9 +1701,16 @@ export function activate(context: vscode.ExtensionContext): void {
                 for (const pid of pids) {
                     try { killProcessTree(pid); }
                     catch { /* ignore */ }
+                    // Remove killed PIDs and their children from cache
+                    for (const [cachedPid] of topMemCache) {
+                        try { process.kill(cachedPid, 0); } // Check if alive
+                        catch { topMemCache.delete(cachedPid); } // Dead, remove
+                    }
                 }
                 vscode.window.showInformationMessage(`Killed ${pids.length} zombie workspace(s).`);
-                setTimeout(refreshDashboard, 1500);
+                // Refresh twice: once after processes die, once after top cache updates
+                setTimeout(refreshDashboard, 2000);
+                setTimeout(refreshDashboard, 4000);
             } else if (msg.command === 'rename') {
                 const newLabel = await vscode.window.showInputBox({
                     prompt: `Label for "${msg.name}"`,
