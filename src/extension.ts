@@ -26,8 +26,8 @@ async function execAsync(cmd: string, timeout: number = 3000): Promise<string> {
 // Constants
 // ============================================================
 
-const THRESHOLD_WARNING = 1 * 1024 * 1024 * 1024;
-const THRESHOLD_CRITICAL = 2 * 1024 * 1024 * 1024;
+const THRESHOLD_WARNING = 2 * 1024 * 1024 * 1024;
+const THRESHOLD_CRITICAL = 4 * 1024 * 1024 * 1024;
 
 const SPARKLINE_MAX_SAMPLES = 20;
 // Braille sparkline: each character encodes 2 data points (left + right column)
