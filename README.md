@@ -41,8 +41,8 @@ All fully automatic. Zero user intervention required.
 > Background monitor checks language server memory every few seconds. When it exceeds the threshold, the process is terminated gracefully. Antigravity auto-restarts a fresh server within seconds.
 
 - Configurable threshold, interval, and on/off toggle
-- Subtle status bar flash on kill (shield icon + warning background, 5s)
-- 10s cooldown prevents double-triggers
+- Subtle status bar flash on kill (red text, 2s)
+- 5s cooldown prevents double-triggers
 
 ### Status Bar
 
@@ -130,6 +130,18 @@ npm run deploy   # Compile + install to ~/.antigravity/extensions/
 ```
 
 ## Changelog
+
+### v0.4.1
+
+- Dashboard settings panel with custom stepper controls (- / value / +)
+- Restart Extensions button on dashboard
+- Watchdog PID detection rewritten to use process tree (ppid) instead of PID distance heuristic
+- Dashboard auto-refresh now reuses check interval config
+- Close button moved below progress bar for consistent card alignment
+- Workspace path displayed in card footer row
+- Memory color thresholds doubled (warning 2 GB, critical 4 GB)
+- Status bar update lock with 10s safety timeout
+- Leak kill flash: red text, 2s duration
 
 ### v0.4.0
 

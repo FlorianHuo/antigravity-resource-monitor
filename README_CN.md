@@ -41,14 +41,14 @@ Antigravity 的 language server 在开启新的 AI 对话时，可能出现**严
 > 后台定时检测 language server 内存。超过阈值时终止进程，Antigravity 在几秒内自动重启。
 
 - 阈值、检测间隔、开关均可在设置中调整
-- 清理时右下角状态栏短暂闪烁提示（5 秒）
-- 10 秒冷却防止重复触发
+- 清理时右下角状态栏短暂红色闪烁提示（2 秒）
+- 5 秒冷却防止重复触发
 
 ### 状态栏
 
 > 实时显示当前窗口的内存占用，按严重程度着色。
 
-- **绿色** < 1 GB &middot; **黄色** 1-2 GB &middot; **红色** > 2 GB
+- **绿色** < 2 GB &middot; **黄色** 2-4 GB &middot; **红色** > 4 GB
 - macOS 内存压力指示 (Normal / Warn / Critical)
 - Tooltip 中显示 Braille 字符内存走势
 
@@ -127,6 +127,27 @@ cd antigravity-resource-monitor
 npm install
 npm run deploy   # 编译 + 安装到 ~/.antigravity/extensions/
 ```
+
+## 更新日志
+
+### v0.4.1
+
+- 设置面板使用自定义 stepper 控件（- / 值 / +）
+- 面板新增「Restart Extensions」按钮
+- Watchdog 改用进程树（ppid）检测，修复连续 kill 失效
+- Dashboard 自动刷新复用检测间隔配置
+- Close 按钮移至进度条下方，卡片对齐一致
+- 工作区路径显示在卡片底部行
+- 内存着色阈值翻倍（警告 2 GB，危险 4 GB）
+- 状态栏更新锁增加 10 秒安全超时
+- Kill 提示改为红色文字，持续 2 秒
+
+### v0.4.0
+
+- 自动检测并清理 language server 内存泄漏
+- 一键屏蔽报错弹窗补丁
+- 所有设置可通过 Settings UI 配置
+- 状态栏使用 top MEM（与活动监视器一致）
 
 ## 许可证
 
