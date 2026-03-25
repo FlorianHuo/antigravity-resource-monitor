@@ -46,6 +46,7 @@ function getConfig() {
 }
 
 let leakFlashUntil = 0; // Timestamp until which status bar shows kill notification
+const memoryHistory: number[] = []; // Status bar sparkline memory samples
 
 const REGISTRY_PATH = path.join(os.homedir(), '.gemini', 'antigravity', '.resource-monitor-registry.json');
 
@@ -1474,10 +1475,13 @@ function startLeakWatchdog(statusItem: vscode.StatusBarItem): void {
                 try { process.kill(cachedPid, 'SIGTERM'); } catch { /* already dead */ }
                 cachedPid = 0;
                 lastKillTime = Date.now();
-                // Flash status bar for 5 seconds (updateStatusBar skips during flash)
+                // Reset stale memory data so status bar won't flash old value after flash
+                topMemCache.clear();
+                memoryHistory.length = 0;
+                // Flash status bar for 2 seconds (updateStatusBar skips during flash)
                 leakFlashUntil = Date.now() + 2000;
                 statusItem.text = `$(shield) Leak killed`;
-                statusItem.backgroundColor = new vscode.ThemeColor('statusBarItem.warningBackground');
+                statusItem.backgroundColor = new vscode.ThemeColor('statusBarItem.prominentBackground');
             }
         } catch { cachedPid = 0; }
     }, checkIntervalMs);
@@ -1494,7 +1498,6 @@ export function activate(context: vscode.ExtensionContext): void {
 
     let isVisible = true;
     let dashboardPanel: vscode.WebviewPanel | undefined;
-    const memoryHistory: number[] = [];
 
     // Register self immediately and when editors change
     registerSelf();
