@@ -966,40 +966,51 @@ function generateDashboardShell(): string {
         display: flex; align-items: center; gap: 6px; cursor: pointer;
         font-size: 12px; opacity: 0.5; transition: opacity 0.15s;
         background: none; border: none; color: var(--fg); padding: 4px 0;
+        outline: none;
     }
     .settings-toggle:hover { opacity: 0.8; }
-    .settings-toggle .chevron { transition: transform 0.2s; display: inline-block; }
+    .settings-toggle .chevron { transition: transform 0.2s; display: inline-block; font-size: 10px; }
     .settings-toggle .chevron.open { transform: rotate(90deg); }
-    .settings-grid {
-        display: grid; grid-template-columns: 1fr 90px;
-        align-items: center;
-        margin-top: 8px;
-        background: var(--card-bg); border: 1px solid var(--border); border-radius: 6px;
-        overflow: hidden;
+    .settings-body { margin-top: 8px; }
+    .settings-body.hidden { display: none; }
+    .settings-item {
+        padding: 10px 0; border-bottom: 1px solid color-mix(in srgb, var(--border) 40%, transparent);
     }
-    .settings-grid.hidden { display: none; }
-    .settings-row {
-        display: contents;
+    .settings-item:last-child { border-bottom: none; }
+    .settings-item-header {
+        display: flex; justify-content: space-between; align-items: center;
     }
-    .settings-row + .settings-row label,
-    .settings-row + .settings-row .cfg-control { border-top: 1px solid var(--border); }
-    .settings-row label {
-        font-size: 12px; padding: 10px 12px;
+    .settings-item-label { font-size: 12px; font-weight: 500; }
+    .settings-item-desc { font-size: 11px; opacity: 0.4; margin-top: 3px; }
+    /* Toggle switch */
+    .toggle-switch {
+        position: relative; width: 36px; height: 20px; flex-shrink: 0;
     }
-    .settings-row .label-desc {
-        display: block; font-size: 10px; opacity: 0.4; margin-top: 2px; font-weight: normal;
+    .toggle-switch input { opacity: 0; width: 0; height: 0; position: absolute; }
+    .toggle-track {
+        position: absolute; inset: 0; border-radius: 10px; cursor: pointer;
+        background: var(--border); transition: background 0.2s;
     }
-    .cfg-control {
-        padding: 10px 12px; display: flex; justify-content: center; align-items: center;
+    .toggle-track::after {
+        content: ''; position: absolute; width: 14px; height: 14px;
+        left: 3px; top: 3px; border-radius: 50%; background: #fff;
+        transition: transform 0.2s;
     }
-    .settings-grid input[type="number"] {
-        width: 70px; padding: 4px 6px; font-size: 12px;
-        background: var(--bg); color: var(--fg); border: 1px solid var(--border);
-        border-radius: 3px; text-align: center;
+    .toggle-switch input:checked + .toggle-track { background: var(--accent); }
+    .toggle-switch input:checked + .toggle-track::after { transform: translateX(16px); }
+    /* Number input */
+    .settings-input-row {
+        display: flex; align-items: center; gap: 6px; margin-top: 6px;
     }
-    .settings-grid input[type="checkbox"] {
-        width: 16px; height: 16px; cursor: pointer;
+    .settings-input-row input[type="number"] {
+        width: 64px; padding: 4px 8px; font-size: 12px;
+        background: var(--card-bg); color: var(--fg);
+        border: 1px solid var(--border); border-radius: 4px;
+        text-align: center; outline: none;
+        transition: border-color 0.15s;
     }
+    .settings-input-row input[type="number"]:focus { border-color: var(--accent); }
+    .settings-input-row .unit { font-size: 11px; opacity: 0.5; }
     .settings-saved {
         font-size: 11px; color: #4ec44e; opacity: 0; transition: opacity 0.3s;
         margin-left: 8px;
@@ -1029,22 +1040,42 @@ function generateDashboardShell(): string {
             Settings
             <span class="settings-saved" id="settings-saved">Saved</span>
         </button>
-        <div class="settings-grid hidden" id="settings-panel">
-            <div class="settings-row">
-                <label>Leak monitor<span class="label-desc">Auto-kill leaked language server processes</span></label>
-                <div class="cfg-control"><input type="checkbox" id="cfg-enabled"></div>
+        <div class="settings-body hidden" id="settings-panel">
+            <div class="settings-item">
+                <div class="settings-item-header">
+                    <div>
+                        <div class="settings-item-label">Leak Monitor</div>
+                        <div class="settings-item-desc">Automatically kill language server processes when memory exceeds threshold</div>
+                    </div>
+                    <label class="toggle-switch">
+                        <input type="checkbox" id="cfg-enabled">
+                        <span class="toggle-track"></span>
+                    </label>
+                </div>
             </div>
-            <div class="settings-row">
-                <label>Memory threshold<span class="label-desc">Kill when exceeding this limit</span></label>
-                <div class="cfg-control"><input type="number" id="cfg-threshold" min="0.5" max="16" step="0.5"> GB</div>
+            <div class="settings-item">
+                <div class="settings-item-label">Memory Threshold</div>
+                <div class="settings-item-desc">Terminate the language server when memory usage exceeds this value</div>
+                <div class="settings-input-row">
+                    <input type="number" id="cfg-threshold" min="0.5" max="16" step="0.5">
+                    <span class="unit">GB</span>
+                </div>
             </div>
-            <div class="settings-row">
-                <label>Check interval<span class="label-desc">How often to check memory</span></label>
-                <div class="cfg-control"><input type="number" id="cfg-interval" min="1" max="60" step="1"> s</div>
+            <div class="settings-item">
+                <div class="settings-item-label">Check Interval</div>
+                <div class="settings-item-desc">How often to poll memory usage</div>
+                <div class="settings-input-row">
+                    <input type="number" id="cfg-interval" min="1" max="60" step="1">
+                    <span class="unit">seconds</span>
+                </div>
             </div>
-            <div class="settings-row">
-                <label>Status bar refresh<span class="label-desc">Update frequency for status bar</span></label>
-                <div class="cfg-control"><input type="number" id="cfg-statusbar" min="1" max="30" step="1"> s</div>
+            <div class="settings-item">
+                <div class="settings-item-label">Status Bar Refresh</div>
+                <div class="settings-item-desc">How often to update the status bar memory indicator</div>
+                <div class="settings-input-row">
+                    <input type="number" id="cfg-statusbar" min="1" max="30" step="1">
+                    <span class="unit">seconds</span>
+                </div>
             </div>
         </div>
     </div>
