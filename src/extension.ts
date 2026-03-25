@@ -34,7 +34,7 @@ const SPARKLINE_MAX_SAMPLES = 20;
 // Braille sparkline: each character encodes 2 data points (left + right column)
 // Dot layout (top to bottom): 1,2,3,7 (left)  4,5,6,8 (right)
 const BRAILLE_BASE = 0x2800;
-const LEAK_THRESHOLD_KB = 300 * 1024; // 300 MB language_server = likely leak
+const LEAK_THRESHOLD_KB = 4 * 1024 * 1024; // 4 GB language_server = definitely a leak
 const LEAK_CHECK_INTERVAL_MS = 10_000; // Check every 10s
 const RELOAD_COOLDOWN_MS = 5 * 60 * 1000; // 5 min after reload
 
