@@ -4,15 +4,14 @@ A lightweight extension that monitors and displays per-window memory usage in th
 
 ## Features
 
-- **Real-time memory monitoring**: Shows RSS memory in the status bar, updated every 3 seconds
-- **Color-coded alerts**: Green (< 1 GB), Yellow (1-2 GB), Red (> 2 GB)
-- **System memory pressure**: Displays macOS memory pressure level (Normal/Warn/Critical)
+- **Real-time memory monitoring**: Shows per-window memory (via `top` MEM, matching Activity Monitor) in the status bar
+- **Color-coded alerts**: Green (< 1 GB), Yellow (1-2 GB), Red (> 2 GB) with system pressure indicator
 - **Braille sparkline**: Inline trend graph in the tooltip showing memory history
+- **Memory leak watchdog**: Automatically detects and kills leaked `language_server` processes (> 2 GB MEM) with subtle status bar notification
 - **Process Dashboard**: Full WebView dashboard showing all Antigravity workspaces and their processes
-- **Incremental updates**: Dashboard uses postMessage for fast data updates without full page reloads
-- **Workspace labeling**: Click subtitle in dashboard to set custom labels for workspaces
+- **Close workspace**: Safely close remote workspaces with atomic process tree cleanup
 - **Zombie detection**: Identifies and allows batch-killing of orphaned playground workspaces
-- **Process tree kill**: Recursively kills workspace process trees (children first)
+- **Crash notification suppression**: Patches Antigravity's extension.js to hide scary error popups when watchdog kills a leaked server
 
 ## Commands
 
@@ -30,9 +29,15 @@ npm run compile
 npm run deploy    # Compile + copy to the Antigravity extensions directory
 ```
 
+After Antigravity updates, re-run the crash notification patch:
+```bash
+python3 scripts/patch_suppress_crash.py
+```
+
 ## Architecture
 
-- **Memory metric**: Uses macOS `ps` RSS for per-process memory (fast, no permission issues)
+- **Memory metric**: Uses macOS `top` for per-process MEM (matches Activity Monitor, captures compressed memory); falls back to `ps` RSS
+- **Leak watchdog**: Polls `topMemCache` every 5s for language_server MEM > 2 GB threshold; kills with SIGTERM and flashes status bar
 - **System pressure**: Batched single-command gathering of `vm_stat`, `sysctl`, and `memory_pressure` for minimal process fork overhead
 - **Dashboard rendering**: Static HTML shell loaded once; data pushed via `postMessage` for incremental DOM updates (preserves expand/collapse state)
 - **Registry**: Cross-window coordination via `~/.gemini/antigravity/.resource-monitor-registry.json`
@@ -40,9 +45,23 @@ npm run deploy    # Compile + copy to the Antigravity extensions directory
 
 ## Changelog
 
+### v0.4.0
+
+- **Memory leak watchdog**: Automatically detects `language_server_macos_arm` memory leaks (triggered by new AI conversations) and kills the process when MEM exceeds 2 GB. Antigravity auto-restarts a fresh server.
+  - Uses `topMemCache` (same data source as dashboard) for zero-overhead detection
+  - Subtle status bar notification: `$(shield) Leak killed` with warning background for 5s
+  - 10s kill cooldown to prevent double-trigger from stale cache
+- **Crash notification suppression**: Patch script (`scripts/patch_suppress_crash.py`) suppresses 3 Antigravity error popups that appear when the watchdog kills a server:
+  - "Antigravity server crashed unexpectedly"
+  - "Restarting server failed"
+  - "couldn't create connection to server"
+- **Status bar accuracy**: Status bar now uses `top` MEM (via full process tree walk) instead of `ps` RSS, matching the dashboard values
+- **Close workspace guard**: Closing the current workspace from dashboard uses `closeWindow` instead of killing own processes (prevents dashboard crash)
+- **Top cache TTL**: Reduced from 15s to 5s for faster leak detection
+
 ### v0.3.2
 
-- **Auto-reload on cold start**: when a workspace hasn't been opened for >4 hours, automatically reload the window 60s after activation to clear `language_server` indexing memory leak
+- **Auto-reload on cold start**: when a workspace hasn't been opened for > 4 hours, automatically reload the window 60s after activation to clear `language_server` indexing memory leak
 - **Memory display fix**: workspace total now shows real-time memory instead of peak; peak is still annotated per-process
 
 ### v0.3.1
