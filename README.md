@@ -59,6 +59,9 @@ Reload the Antigravity window to activate.
 
 When the watchdog kills a leaked server, Antigravity shows error popups ("server crashed unexpectedly"). To suppress them:
 
+**Option A (Recommended):** `Cmd+Shift+P` > `Resource Monitor: Apply Crash Notification Patch`
+
+**Option B:** Command line
 ```bash
 python3 scripts/patch_suppress_crash.py           # Apply patches
 python3 scripts/patch_suppress_crash.py --status   # Check patch status

@@ -1510,9 +1510,52 @@ export function activate(context: vscode.ExtensionContext): void {
         if (dashboardPanel) { await sendDashboardData(dashboardPanel); }
     });
 
+    // One-click crash notification patch
+    const applyPatchCmd = vscode.commands.registerCommand('resourceMonitor.applyPatch', async () => {
+        const scriptPath = path.join(context.extensionPath, 'scripts', 'patch_suppress_crash.py');
+        try {
+            const output = await execAsync(`python3 "${scriptPath}"`, 30000);
+            vscode.window.showInformationMessage(
+                'Crash notification patch applied. Reload window to take effect.',
+                'Reload'
+            ).then(choice => {
+                if (choice === 'Reload') {
+                    vscode.commands.executeCommand('workbench.action.reloadWindow');
+                }
+            });
+            // Show details in output channel
+            const ch = vscode.window.createOutputChannel('Resource Monitor');
+            ch.appendLine(output);
+            ch.show(true);
+        } catch (err: any) {
+            vscode.window.showErrorMessage(`Patch failed: ${err.message || err}`);
+        }
+    });
+
+    const restorePatchCmd = vscode.commands.registerCommand('resourceMonitor.restorePatch', async () => {
+        const scriptPath = path.join(context.extensionPath, 'scripts', 'patch_suppress_crash.py');
+        try {
+            const output = await execAsync(`python3 "${scriptPath}" --restore`, 30000);
+            vscode.window.showInformationMessage(
+                'Original files restored. Reload window to take effect.',
+                'Reload'
+            ).then(choice => {
+                if (choice === 'Reload') {
+                    vscode.commands.executeCommand('workbench.action.reloadWindow');
+                }
+            });
+            const ch = vscode.window.createOutputChannel('Resource Monitor');
+            ch.appendLine(output);
+            ch.show(true);
+        } catch (err: any) {
+            vscode.window.showErrorMessage(`Restore failed: ${err.message || err}`);
+        }
+    });
+
     context.subscriptions.push(
         statusItem, editorListener,
         showDashboardCmd, showDetailsCmd, toggleCmd, refreshCmd,
+        applyPatchCmd, restorePatchCmd,
         { dispose: () => { clearInterval(statusBarInterval); clearInterval(registryInterval); stopDashboardAutoRefresh(); } }
     );
 }

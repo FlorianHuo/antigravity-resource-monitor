@@ -31,6 +31,14 @@
             {
                 "command": "resourceMonitor.toggle",
                 "title": "Resource Monitor: Toggle Visibility"
+            },
+            {
+                "command": "resourceMonitor.applyPatch",
+                "title": "Resource Monitor: Apply Crash Notification Patch"
+            },
+            {
+                "command": "resourceMonitor.restorePatch",
+                "title": "Resource Monitor: Restore Original Files"
             }
         ],
         "configuration": {
