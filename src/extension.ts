@@ -1277,7 +1277,7 @@ function startLeakWatchdog(statusItem: vscode.StatusBarItem): void {
                 statusItem.backgroundColor = new vscode.ThemeColor('statusBarItem.warningBackground');
                 flashTimer = setTimeout(() => {
                     statusItem.backgroundColor = undefined;
-                }, 5000);
+                }, 2000);
             }
         } catch { cachedPid = 0; }
     }, LEAK_CHECK_INTERVAL_MS);
