@@ -34,9 +34,9 @@ const SPARKLINE_MAX_SAMPLES = 20;
 // Braille sparkline: each character encodes 2 data points (left + right column)
 // Dot layout (top to bottom): 1,2,3,7 (left)  4,5,6,8 (right)
 const BRAILLE_BASE = 0x2800;
-const COLD_START_THRESHOLD_MS = 4 * 60 * 60 * 1000; // 4 hours
+const LEAK_THRESHOLD_KB = 300 * 1024; // 300 MB language_server = likely leak
+const LEAK_CHECK_INTERVAL_MS = 10_000; // Check every 10s
 const RELOAD_COOLDOWN_MS = 5 * 60 * 1000; // 5 min after reload
-const RELOAD_DELAY_MS = 60 * 1000; // Wait 60s for indexing to finish
 
 const REGISTRY_PATH = path.join(os.homedir(), '.gemini', 'antigravity', '.resource-monitor-registry.json');
 
@@ -787,19 +787,28 @@ async function scanWorkspaces(): Promise<ScanResult> {
 async function getCurrentWindowMemoryKB(): Promise<number> {
     try {
         const myPid = process.pid;
-        const raw = await execAsync('ps -eo pid,ppid,rss | grep -v grep', 2000);
-        let rssTotal = 0;
+        const raw = await execAsync('ps -eo pid,ppid,rss', 2000);
+        // Build parent->children map and PID->RSS map
+        const children: Record<number, number[]> = {};
+        const rssOf: Record<number, number> = {};
         for (const line of raw.split('\n')) {
             const m = line.trim().match(/^(\d+)\s+(\d+)\s+(\d+)$/);
             if (!m) { continue; }
             const pid = parseInt(m[1], 10);
             const ppid = parseInt(m[2], 10);
-            const rss = parseInt(m[3], 10);
-            if (pid === myPid || ppid === myPid) {
-                rssTotal += rss;
-            }
+            rssOf[pid] = parseInt(m[3], 10);
+            if (!children[ppid]) { children[ppid] = []; }
+            children[ppid].push(pid);
         }
-        return rssTotal || Math.round(process.memoryUsage().rss / 1024);
+        // Walk full descendant tree from myPid
+        let total = rssOf[myPid] || 0;
+        const queue = children[myPid] ? [...children[myPid]] : [];
+        while (queue.length > 0) {
+            const p = queue.pop()!;
+            total += rssOf[p] || 0;
+            if (children[p]) { queue.push(...children[p]); }
+        }
+        return total || Math.round(process.memoryUsage().rss / 1024);
     }
     catch {
         return Math.round(process.memoryUsage().rss / 1024);
@@ -1218,49 +1227,80 @@ function generateSparkline(history: number[]): string {
 }
 
 // ============================================================
-// Auto-reload on cold start
+// Auto-reload on language_server memory leak
 // ============================================================
 
-// language_server_macos_arm leaks memory during initial file indexing.
-// When opening a workspace that hasn't been used in a while, we wait
-// for indexing to complete (60s), then automatically reload the window.
-// The restarted language_server uses cached indexes and doesn't leak.
-// A 5-minute cooldown prevents infinite reload loops.
-function scheduleAutoReloadIfCold(): void {
+// The first AI conversation in a cold workspace triggers a memory leak
+// in language_server_macos_arm. Reloading the window AFTER the leak
+// clears it; subsequent conversations don't leak. This watchdog polls
+// language_server RSS and auto-reloads when it exceeds the threshold.
+function startLeakWatchdog(): void {
+    let lastReloaded = 0;
+
+    // Check registry for recent reload to avoid reload-on-startup loops
     try {
         const folders = vscode.workspace.workspaceFolders;
-        if (!folders || folders.length === 0) { return; }
-        const folderName = folders[0].name;
-        const registry = readRegistry();
-        const entry = registry.entries[folderName];
-        const now = Date.now();
-
-        // Check cooldown: skip if we just reloaded
-        if (entry?.lastReloaded && (now - entry.lastReloaded) < RELOAD_COOLDOWN_MS) {
-            return;
+        if (folders && folders.length > 0) {
+            const registry = readRegistry();
+            const entry = registry.entries[folders[0].name];
+            if (entry?.lastReloaded) { lastReloaded = entry.lastReloaded; }
         }
+    } catch { /* ignore */ }
 
-        // Check if cold start
-        const isCold = !entry || (now - entry.timestamp) > COLD_START_THRESHOLD_MS;
-        if (!isCold) { return; }
+    const watchdogInterval = setInterval(async () => {
+        // Cooldown check
+        if (Date.now() - lastReloaded < RELOAD_COOLDOWN_MS) { return; }
 
-        // Schedule delayed reload
-        setTimeout(() => {
-            try {
-                // Mark as reloaded BEFORE reloading to prevent loop
-                const reg = readRegistry();
-                if (!reg.entries[folderName]) {
-                    reg.entries[folderName] = {
-                        folderName, openEditors: [], customLabel: '',
-                        detectedTitle: '', pid: process.pid, timestamp: now,
-                    };
+        try {
+            // Get language_server RSS for this workspace's ExtHost PID
+            const myPid = process.pid;
+            const raw = await execAsync(
+                `ps -eo pid,ppid,rss,command | grep language_server_macos_arm | grep -v grep`,
+                3000
+            );
+            // Find language_server whose parent chain includes our ExtHost
+            // Simple heuristic: find one with PID close to ours (within 500)
+            let maxRssKB = 0;
+            for (const line of raw.trim().split('\n')) {
+                const parts = line.trim().split(/\s+/);
+                if (parts.length < 4) { continue; }
+                const pid = parseInt(parts[0]);
+                const rssKB = parseInt(parts[2]);
+                // Check PID proximity to our ExtHost (language_server is a sibling)
+                if (Math.abs(pid - myPid) < 500 && rssKB > maxRssKB) {
+                    maxRssKB = rssKB;
                 }
-                reg.entries[folderName].lastReloaded = Date.now();
-                writeRegistry(reg);
-                vscode.commands.executeCommand('workbench.action.reloadWindow');
-            } catch { /* swallow */ }
-        }, RELOAD_DELAY_MS);
-    } catch { /* never crash activation */ }
+            }
+
+            if (maxRssKB > LEAK_THRESHOLD_KB) {
+                clearInterval(watchdogInterval);
+                // Mark as reloaded to prevent loop
+                try {
+                    const folders = vscode.workspace.workspaceFolders;
+                    if (folders && folders.length > 0) {
+                        const reg = readRegistry();
+                        const fn = folders[0].name;
+                        if (reg.entries[fn]) {
+                            reg.entries[fn].lastReloaded = Date.now();
+                        } else {
+                            reg.entries[fn] = {
+                                folderName: fn, openEditors: [], customLabel: '',
+                                detectedTitle: '', pid: myPid, timestamp: Date.now(),
+                                lastReloaded: Date.now(),
+                            };
+                        }
+                        writeRegistry(reg);
+                    }
+                } catch { /* ignore */ }
+                vscode.window.showWarningMessage(
+                    `Language server leak detected (${Math.round(maxRssKB/1024)} MB). Auto-reloading...`
+                );
+                setTimeout(() => {
+                    vscode.commands.executeCommand('workbench.action.reloadWindow');
+                }, 2000); // Give user 2s to see the warning
+            }
+        } catch { /* ps failed, skip this cycle */ }
+    }, LEAK_CHECK_INTERVAL_MS);
 }
 
 // ============================================================
@@ -1279,7 +1319,7 @@ export function activate(context: vscode.ExtensionContext): void {
     // Register self immediately and when editors change
     registerSelf();
     refreshTopMemCache(); // Eagerly populate top MEM cache for accurate dashboard
-    scheduleAutoReloadIfCold();
+    startLeakWatchdog();
     const registryInterval = setInterval(registerSelf, 30000);
     const editorListener = vscode.window.onDidChangeActiveTextEditor(() => registerSelf());
 
