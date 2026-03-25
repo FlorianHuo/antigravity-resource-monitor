@@ -933,13 +933,14 @@ function generateDashboardShell(): string {
     .ws-header:hover .kill-all-btn { opacity: 0.7; }
     .kill-all-btn:hover { opacity: 1 !important; background: #f4474722; }
     .ws-card-actions {
-        display: flex; justify-content: flex-end; padding: 2px 12px 0;
+        display: flex; justify-content: space-between; align-items: center;
+        padding: 2px 12px 0;
     }
-    .ws-card:hover .ws-card-actions { opacity: 1; }
+    .ws-card-actions .ws-subtitle { flex: 1; }
     .close-ws-btn {
         background: transparent; border: none; cursor: pointer;
         font-size: 11px; padding: 2px 6px; color: var(--fg);
-        opacity: 0.25; transition: opacity 0.15s;
+        opacity: 0.25; transition: opacity 0.15s; flex-shrink: 0;
     }
     .close-ws-btn:hover { opacity: 0.8; }
     .shared-row {
@@ -1207,17 +1208,18 @@ function generateDashboardShell(): string {
                 }
 
                 var subtitleHtml = ws.subtitle
-                    ? '<div class="ws-subtitle" data-action="rename" data-name="' + escapeHtml(ws.name) + '">' + escapeHtml(ws.subtitle) + '</div>'
-                    : '<div class="ws-subtitle ws-subtitle-empty" data-action="rename" data-name="' + escapeHtml(ws.name) + '">click to label</div>';
+                    ? '<span class="ws-subtitle" data-action="rename" data-name="' + escapeHtml(ws.name) + '">' + escapeHtml(ws.subtitle) + '</span>'
+                    : '<span class="ws-subtitle ws-subtitle-empty" data-action="rename" data-name="' + escapeHtml(ws.name) + '">click to label</span>';
 
                 var allWsPids = ws.processList.map(function(p) { return p.pid; }).join(',');
                 wsHtml += '<div class="ws-card' + (ws.isZombie ? ' zombie' : '') + '" data-ws-name="' + escapeHtml(ws.name) + '">'
                     + '<div class="ws-header">'
-                    + '<div class="ws-info"><div class="ws-name">' + escapeHtml(ws.name) + '</div>' + subtitleHtml + '</div>'
+                    + '<div class="ws-info"><div class="ws-name">' + escapeHtml(ws.name) + '</div></div>'
                     + '<div class="ws-stats"><span class="ws-mem">' + memStr + '</span><span class="ws-pct">' + memPct + '%</span>'
                     + '</div></div>'
                     + '<div class="ws-bar-track"><div class="ws-bar-fill" style="width:' + barWidth + '%;background:' + barColor + '"></div></div>'
                     + '<div class="ws-card-actions">'
+                    + subtitleHtml
                     + '<button class="close-ws-btn" data-action="closeWorkspace" data-pids="' + allWsPids + '" data-name="' + escapeHtml(ws.name) + '" title="Close workspace (kill all processes)">Close Workspace</button>'
                     + '</div>'
                     + '<div class="ws-details' + (isExpanded ? '' : ' hidden') + '">' + procHtml + '</div>'
