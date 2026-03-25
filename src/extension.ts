@@ -1273,11 +1273,11 @@ function startLeakWatchdog(statusItem: vscode.StatusBarItem): void {
                 cachedPid = 0;
                 // Flash status bar for 5 seconds
                 if (flashTimer) { clearTimeout(flashTimer); }
-                statusItem.text = `$(warning) Leak killed (${memGB} GB)`;
+                statusItem.text = `$(shield) ${memGB}G fixed`;
                 statusItem.backgroundColor = new vscode.ThemeColor('statusBarItem.warningBackground');
                 flashTimer = setTimeout(() => {
                     statusItem.backgroundColor = undefined;
-                }, 2000);
+                }, 5000);
             }
         } catch { cachedPid = 0; }
     }, LEAK_CHECK_INTERVAL_MS);
