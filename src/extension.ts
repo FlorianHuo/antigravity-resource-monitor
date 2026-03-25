@@ -1038,6 +1038,7 @@ function generateDashboardShell(): string {
         </div>
         <div class="header-actions">
             <span class="auto-refresh-label">Auto-refresh: ${getConfig().checkIntervalMs / 1000}s</span>
+            <button class="refresh-btn" data-action="restartExtHost" style="background:#e0a030">Restart Extensions</button>
             <button class="refresh-btn" data-action="reloadWindow" style="background:#1389fd">Reload Window</button>
             <button class="refresh-btn" data-action="refresh" style="background:#4ec44e">Refresh</button>
         </div>
@@ -1272,6 +1273,8 @@ function generateDashboardShell(): string {
             if (action === 'refresh') {
                 document.getElementById('summary').textContent = 'Refreshing...';
                 vscode.postMessage({ command: 'refresh' });
+            } else if (action === 'restartExtHost') {
+                vscode.postMessage({ command: 'restartExtHost' });
             } else if (action === 'reloadWindow') {
                 vscode.postMessage({ command: 'reloadWindow' });
             } else if (action === 'kill') {
@@ -1596,6 +1599,8 @@ export function activate(context: vscode.ExtensionContext): void {
         dashboardPanel.webview.onDidReceiveMessage(async (msg: any) => {
             if (msg.command === 'refresh') {
                 refreshDashboard();
+            } else if (msg.command === 'restartExtHost') {
+                vscode.commands.executeCommand('workbench.action.restartExtensionHost');
             } else if (msg.command === 'reloadWindow') {
                 vscode.commands.executeCommand('workbench.action.reloadWindow');
             } else if (msg.command === 'kill') {
