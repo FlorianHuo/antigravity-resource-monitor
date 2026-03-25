@@ -1233,7 +1233,9 @@ function generateSparkline(history: number[]): string {
 // The first AI conversation in a cold workspace triggers a memory leak
 // in language_server_macos_arm. Reloading the window AFTER the leak
 // clears it; subsequent conversations don't leak. This watchdog polls
-// language_server RSS and auto-reloads when it exceeds the threshold.
+// language_server MEM (via top, matching Activity Monitor) and auto-reloads
+// when it exceeds the threshold. We use top instead of ps because macOS
+// compresses leaked pages, so RSS stays low while real usage is huge.
 function startLeakWatchdog(): void {
     let lastReloaded = 0;
 
@@ -1252,27 +1254,34 @@ function startLeakWatchdog(): void {
         if (Date.now() - lastReloaded < RELOAD_COOLDOWN_MS) { return; }
 
         try {
-            // Get language_server RSS for this workspace's ExtHost PID
             const myPid = process.pid;
+            // Find language_server PIDs near our ExtHost
             const raw = await execAsync(
-                `ps -eo pid,ppid,rss,command | grep language_server_macos_arm | grep -v grep`,
+                `ps -eo pid,command | grep language_server_macos_arm | grep -v grep`,
                 3000
             );
-            // Find language_server whose parent chain includes our ExtHost
-            // Simple heuristic: find one with PID close to ours (within 500)
-            let maxRssKB = 0;
+            const langServerPids: number[] = [];
             for (const line of raw.trim().split('\n')) {
                 const parts = line.trim().split(/\s+/);
-                if (parts.length < 4) { continue; }
+                if (parts.length < 2) { continue; }
                 const pid = parseInt(parts[0]);
-                const rssKB = parseInt(parts[2]);
-                // Check PID proximity to our ExtHost (language_server is a sibling)
-                if (Math.abs(pid - myPid) < 500 && rssKB > maxRssKB) {
-                    maxRssKB = rssKB;
+                if (Math.abs(pid - myPid) < 500) {
+                    langServerPids.push(pid);
+                }
+            }
+            if (langServerPids.length === 0) { return; }
+
+            // Refresh top cache and check MEM for these PIDs
+            await refreshTopMemCache();
+            let maxMemKB = 0;
+            for (const pid of langServerPids) {
+                const info = topMemCache.get(pid);
+                if (info && info.currentKB > maxMemKB) {
+                    maxMemKB = info.currentKB;
                 }
             }
 
-            if (maxRssKB > LEAK_THRESHOLD_KB) {
+            if (maxMemKB > LEAK_THRESHOLD_KB) {
                 clearInterval(watchdogInterval);
                 // Mark as reloaded to prevent loop
                 try {
@@ -1293,13 +1302,13 @@ function startLeakWatchdog(): void {
                     }
                 } catch { /* ignore */ }
                 vscode.window.showWarningMessage(
-                    `Language server leak detected (${Math.round(maxRssKB/1024)} MB). Auto-reloading...`
+                    `Language server leak detected (${(maxMemKB/(1024*1024)).toFixed(1)} GB). Auto-reloading...`
                 );
                 setTimeout(() => {
                     vscode.commands.executeCommand('workbench.action.reloadWindow');
-                }, 2000); // Give user 2s to see the warning
+                }, 2000);
             }
-        } catch { /* ps failed, skip this cycle */ }
+        } catch { /* top/ps failed, skip this cycle */ }
     }, LEAK_CHECK_INTERVAL_MS);
 }
 
