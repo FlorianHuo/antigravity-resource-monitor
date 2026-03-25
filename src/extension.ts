@@ -1507,8 +1507,17 @@ export function activate(context: vscode.ExtensionContext): void {
         if (dashboardPanel) { await sendDashboardData(dashboardPanel); }
     });
 
-    // One-click crash notification patch
+    // One-click crash notification patch (with user confirmation)
     const applyPatchCmd = vscode.commands.registerCommand('resourceMonitor.applyPatch', async () => {
+        const confirm = await vscode.window.showWarningMessage(
+            'This will modify Antigravity\'s internal files to suppress crash notifications. '
+            + 'Backups are created automatically and can be restored. '
+            + 'You may need to re-run after Antigravity updates. Use at your own risk.',
+            { modal: true },
+            'I Understand, Apply'
+        );
+        if (confirm !== 'I Understand, Apply') { return; }
+
         const scriptPath = path.join(context.extensionPath, 'scripts', 'patch_suppress_crash.py');
         try {
             const output = await execAsync(`python3 "${scriptPath}"`, 30000);
@@ -1520,7 +1529,6 @@ export function activate(context: vscode.ExtensionContext): void {
                     vscode.commands.executeCommand('workbench.action.reloadWindow');
                 }
             });
-            // Show details in output channel
             const ch = vscode.window.createOutputChannel('Resource Monitor');
             ch.appendLine(output);
             ch.show(true);

@@ -86,6 +86,10 @@ python3 scripts/patch_suppress_crash.py
 
 Re-run after each Antigravity update. Use `--restore` to undo.
 
+> **Disclaimer**: The patch script modifies Antigravity's internal files. Backups are created automatically
+> and can be restored at any time. This is an optional feature provided as-is with no warranty.
+> Use at your own risk.
+
 ---
 
 ## Configuration

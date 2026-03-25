@@ -86,6 +86,9 @@ python3 scripts/patch_suppress_crash.py
 
 Antigravity 更新后需重新运行。使用 `--restore` 可还原。
 
+> **免责声明**：补丁脚本会修改 Antigravity 的内部文件。运行前会自动备份原始文件，
+> 可随时还原。此为可选功能，按原样提供，不提供任何担保，风险自负。
+
 ---
 
 ## 自定义配置
