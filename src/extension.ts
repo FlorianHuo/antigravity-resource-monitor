@@ -29,7 +29,6 @@ async function execAsync(cmd: string, timeout: number = 3000): Promise<string> {
 const THRESHOLD_WARNING = 1 * 1024 * 1024 * 1024;
 const THRESHOLD_CRITICAL = 2 * 1024 * 1024 * 1024;
 
-const DASHBOARD_POLL_MS = 5000;
 const SPARKLINE_MAX_SAMPLES = 20;
 // Braille sparkline: each character encodes 2 data points (left + right column)
 // Dot layout (top to bottom): 1,2,3,7 (left)  4,5,6,8 (right)
@@ -1038,7 +1037,7 @@ function generateDashboardShell(): string {
             <div class="summary" id="summary">Loading...</div>
         </div>
         <div class="header-actions">
-            <span class="auto-refresh-label">Auto-refresh: ${DASHBOARD_POLL_MS / 1000}s</span>
+            <span class="auto-refresh-label">Auto-refresh: ${getConfig().checkIntervalMs / 1000}s</span>
             <button class="refresh-btn" data-action="reloadWindow" style="background:#1389fd">Reload Window</button>
             <button class="refresh-btn" data-action="refresh" style="background:#4ec44e">Refresh</button>
         </div>
@@ -1556,7 +1555,7 @@ export function activate(context: vscode.ExtensionContext): void {
 
     function startDashboardAutoRefresh(): void {
         stopDashboardAutoRefresh();
-        dashboardRefreshInterval = setInterval(refreshDashboard, DASHBOARD_POLL_MS);
+        dashboardRefreshInterval = setInterval(refreshDashboard, getConfig().checkIntervalMs);
     }
 
     function stopDashboardAutoRefresh(): void {
