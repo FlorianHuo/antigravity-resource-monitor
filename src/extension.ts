@@ -787,28 +787,34 @@ async function scanWorkspaces(): Promise<ScanResult> {
 async function getCurrentWindowMemoryKB(): Promise<number> {
     try {
         const myPid = process.pid;
-        const raw = await execAsync('ps -eo pid,ppid,rss', 2000);
-        // Build parent->children map and PID->RSS map
+        const raw = await execAsync('ps -eo pid,ppid', 2000);
+        // Build parent->children map
         const children: Record<number, number[]> = {};
-        const rssOf: Record<number, number> = {};
         for (const line of raw.split('\n')) {
-            const m = line.trim().match(/^(\d+)\s+(\d+)\s+(\d+)$/);
+            const m = line.trim().match(/^(\d+)\s+(\d+)$/);
             if (!m) { continue; }
             const pid = parseInt(m[1], 10);
             const ppid = parseInt(m[2], 10);
-            rssOf[pid] = parseInt(m[3], 10);
             if (!children[ppid]) { children[ppid] = []; }
             children[ppid].push(pid);
         }
-        // Walk full descendant tree from myPid
-        let total = rssOf[myPid] || 0;
+        // Collect all descendant PIDs from myPid
+        const allPids: number[] = [myPid];
         const queue = children[myPid] ? [...children[myPid]] : [];
         while (queue.length > 0) {
             const p = queue.pop()!;
-            total += rssOf[p] || 0;
+            allPids.push(p);
             if (children[p]) { queue.push(...children[p]); }
         }
-        return total || Math.round(process.memoryUsage().rss / 1024);
+        // Use top MEM cache (matches Activity Monitor) for accurate totals
+        const topData = getTopMem(allPids);
+        if (topData.size > 0) {
+            let total = 0;
+            for (const [, info] of topData) { total += info.currentKB; }
+            if (total > 0) { return total; }
+        }
+        // Fallback: sum ps RSS if top cache has no data
+        return Math.round(process.memoryUsage().rss / 1024);
     }
     catch {
         return Math.round(process.memoryUsage().rss / 1024);
