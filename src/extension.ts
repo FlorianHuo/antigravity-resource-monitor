@@ -35,7 +35,7 @@ const SPARKLINE_MAX_SAMPLES = 20;
 // Dot layout (top to bottom): 1,2,3,7 (left)  4,5,6,8 (right)
 const BRAILLE_BASE = 0x2800;
 const LEAK_THRESHOLD_KB = 2 * 1024 * 1024; // 2 GB language_server = definitely a leak
-const LEAK_CHECK_INTERVAL_MS = 3_000; // Check every 3s
+const LEAK_CHECK_INTERVAL_MS = 5_000; // Check every 5s
 const RELOAD_COOLDOWN_MS = 5 * 60 * 1000; // 5 min after reload
 
 const REGISTRY_PATH = path.join(os.homedir(), '.gemini', 'antigravity', '.resource-monitor-registry.json');
@@ -444,7 +444,7 @@ interface TopMemInfo {
 const topMemCache = new Map<number, TopMemInfo>();
 let topCacheTime = 0;
 let topCacheRefreshing = false;
-const TOP_CACHE_TTL_MS = 15_000;
+const TOP_CACHE_TTL_MS = 5_000;
 
 function parseTopMem(s: string): number {
     const m = s.match(/^([\d.]+)(K|M|G)$/);
@@ -1237,8 +1237,8 @@ function generateSparkline(history: number[]): string {
 // ============================================================
 
 // language_server_macos_arm leaks memory on new AI conversations.
-// This watchdog polls RSS every 3s using lightweight ps -o rss (instant,
-// no full process scan). Kills leaked language_server immediately.
+// Uses topMemCache (already refreshed in background for dashboard/status bar)
+// to check MEM. Zero overhead: just a Map lookup every 3s.
 function startLeakWatchdog(): void {
     let cachedPid = 0;
     let cacheTime = 0;
@@ -1263,16 +1263,14 @@ function startLeakWatchdog(): void {
                 if (!cachedPid) { return; }
             }
 
-            // Lightweight RSS check (single process, instant)
-            const rssRaw = await execAsync(`ps -o rss= -p ${cachedPid}`, 1000);
-            const rssKB = parseInt(rssRaw.trim());
-            if (isNaN(rssKB)) { cachedPid = 0; return; } // Process died, re-scan
-
-            if (rssKB > LEAK_THRESHOLD_KB) {
+            // Refresh cache and check MEM (same data source as dashboard)
+            await refreshTopMemCache();
+            const info = topMemCache.get(cachedPid);
+            if (info && info.currentKB > LEAK_THRESHOLD_KB) {
                 try { process.kill(cachedPid, 'SIGKILL'); } catch { /* already dead */ }
-                cachedPid = 0; // Force re-scan next cycle
+                cachedPid = 0;
             }
-        } catch { cachedPid = 0; } // Reset cache on any error
+        } catch { cachedPid = 0; }
     }, LEAK_CHECK_INTERVAL_MS);
 }
 
