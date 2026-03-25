@@ -1182,8 +1182,8 @@ function generateDashboardShell(): string {
                 var memStr = fmtBytes(ws.totalMemoryKB * 1024);
                 var memPct = data.totalMemoryKB > 0
                     ? ((ws.totalMemoryKB / data.totalMemoryKB) * 100).toFixed(1) : '0';
-                var barColor = ws.totalMemoryKB > 500*1024 ? '#f44747'
-                    : ws.totalMemoryKB > 200*1024 ? '#cca700' : '#4ec44e';
+                var barColor = ws.totalMemoryKB > 1000*1024 ? '#f44747'
+                    : ws.totalMemoryKB > 400*1024 ? '#cca700' : '#4ec44e';
                 var barWidth = data.totalMemoryKB > 0
                     ? Math.max(2, (ws.totalMemoryKB / data.totalMemoryKB) * 100) : 0;
 
