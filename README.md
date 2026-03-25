@@ -94,7 +94,7 @@ Re-run after each Antigravity update. Use `--restore` to undo.
 
 ## Configuration
 
-Search **Resource Monitor** in Settings (<kbd>Cmd</kbd> + <kbd>,</kbd>):
+Search **Resource Monitor** in Settings (<kbd>Cmd</kbd> + <kbd>,</kbd>), or use the **Settings** panel at the bottom of the Process Dashboard:
 
 | Setting | Default | Description |
 |---------|---------|-------------|

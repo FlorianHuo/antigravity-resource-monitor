@@ -93,7 +93,7 @@ Antigravity 更新后需重新运行。使用 `--restore` 可还原。
 
 ## 自定义配置
 
-在设置中搜索 **Resource Monitor** (<kbd>Cmd</kbd> + <kbd>,</kbd>)：
+在设置中搜索 **Resource Monitor** (<kbd>Cmd</kbd> + <kbd>,</kbd>)，或使用进程管理面板底部的 **Settings** 面板：
 
 | 设置项 | 默认值 | 说明 |
 |--------|--------|------|
