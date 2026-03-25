@@ -91,8 +91,9 @@ python3 scripts/patch_suppress_crash.py --restore  # 还原
 | 命令 | 说明 |
 |------|------|
 | `Resource Monitor: Process Dashboard` | 打开进程管理面板 |
-| `Resource Monitor: Apply Crash Notification Patch` | 一键屏蔽报错弹窗 |
 | `Resource Monitor: Toggle Visibility` | 显示/隐藏状态栏 |
+| `Resource Monitor: Apply Crash Notification Patch` | 一键屏蔽报错弹窗 |
+| `Resource Monitor: Restore Original Files` | 还原被修改的文件 |
 
 ## 许可证
 

@@ -93,8 +93,9 @@ Search `Resource Monitor` in Antigravity Settings:
 | Command | Description |
 |---------|-------------|
 | `Resource Monitor: Process Dashboard` | Open the full process monitor dashboard |
-| `Resource Monitor: Show Memory Details` | Alias for Process Dashboard |
 | `Resource Monitor: Toggle Visibility` | Show or hide the status bar indicator |
+| `Resource Monitor: Apply Crash Notification Patch` | One-click suppress crash popups |
+| `Resource Monitor: Restore Original Files` | Undo the patch |
 
 ## Changelog
 
