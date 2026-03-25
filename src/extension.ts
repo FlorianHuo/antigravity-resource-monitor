@@ -36,7 +36,7 @@ const SPARKLINE_MAX_SAMPLES = 20;
 const BRAILLE_BASE = 0x2800;
 const LEAK_THRESHOLD_KB = 2 * 1024 * 1024; // 2 GB language_server = definitely a leak
 const LEAK_CHECK_INTERVAL_MS = 5_000; // Check every 5s
-const RELOAD_COOLDOWN_MS = 5 * 60 * 1000; // 5 min after reload
+
 let leakFlashUntil = 0; // Timestamp until which status bar shows kill notification
 
 const REGISTRY_PATH = path.join(os.homedir(), '.gemini', 'antigravity', '.resource-monitor-registry.json');
@@ -53,7 +53,6 @@ interface RegistryEntry {
     pid: number;
     rendererPid?: number;
     timestamp: number;
-    lastReloaded?: number;
 }
 
 interface Registry {
