@@ -933,16 +933,15 @@ function generateDashboardShell(): string {
     .ws-header:hover .kill-all-btn { opacity: 0.7; }
     .kill-all-btn:hover { opacity: 1 !important; background: #f4474722; }
     .ws-card-actions {
-        display: flex; justify-content: flex-end; padding: 4px 12px 0;
-        opacity: 0; transition: opacity 0.15s;
+        display: flex; justify-content: flex-end; padding: 2px 12px 0;
     }
     .ws-card:hover .ws-card-actions { opacity: 1; }
     .close-ws-btn {
         background: transparent; border: none; cursor: pointer;
         font-size: 11px; padding: 2px 6px; color: var(--fg);
-        opacity: 0.5; transition: opacity 0.15s;
+        opacity: 0.25; transition: opacity 0.15s;
     }
-    .close-ws-btn:hover { opacity: 1; }
+    .close-ws-btn:hover { opacity: 0.8; }
     .shared-row {
         display: flex; justify-content: space-between; padding: 8px 12px;
         font-size: 12px; opacity: 0.6; margin-top: 4px;
