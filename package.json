@@ -4,6 +4,10 @@
     "description": "Monitor per-window memory, system pressure, and manage all Antigravity processes",
     "version": "0.4.0",
     "publisher": "florian",
+    "repository": {
+        "type": "git",
+        "url": "https://github.com/FlorianHuo/antigravity-resource-monitor"
+    },
     "engines": {
         "vscode": "^1.85.0"
     },
@@ -28,7 +32,37 @@
                 "command": "resourceMonitor.toggle",
                 "title": "Resource Monitor: Toggle Visibility"
             }
-        ]
+        ],
+        "configuration": {
+            "title": "Resource Monitor",
+            "properties": {
+                "resourceMonitor.leakWatchdog.enabled": {
+                    "type": "boolean",
+                    "default": true,
+                    "description": "Enable automatic detection and killing of leaked language_server processes."
+                },
+                "resourceMonitor.leakWatchdog.thresholdMB": {
+                    "type": "number",
+                    "default": 2048,
+                    "minimum": 512,
+                    "description": "Memory threshold (MB) above which language_server is considered leaked and will be killed."
+                },
+                "resourceMonitor.leakWatchdog.checkIntervalSeconds": {
+                    "type": "number",
+                    "default": 5,
+                    "minimum": 2,
+                    "maximum": 60,
+                    "description": "How often (seconds) to check language_server memory."
+                },
+                "resourceMonitor.statusBar.updateIntervalSeconds": {
+                    "type": "number",
+                    "default": 3,
+                    "minimum": 1,
+                    "maximum": 30,
+                    "description": "How often (seconds) to update the status bar memory display."
+                }
+            }
+        }
     },
     "scripts": {
         "vscode:prepublish": "npm run compile",

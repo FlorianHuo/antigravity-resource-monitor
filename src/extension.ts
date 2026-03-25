@@ -28,14 +28,23 @@ async function execAsync(cmd: string, timeout: number = 3000): Promise<string> {
 
 const THRESHOLD_WARNING = 1 * 1024 * 1024 * 1024;
 const THRESHOLD_CRITICAL = 2 * 1024 * 1024 * 1024;
-const STATUS_BAR_POLL_MS = 3000;
+
 const DASHBOARD_POLL_MS = 5000;
 const SPARKLINE_MAX_SAMPLES = 20;
 // Braille sparkline: each character encodes 2 data points (left + right column)
 // Dot layout (top to bottom): 1,2,3,7 (left)  4,5,6,8 (right)
 const BRAILLE_BASE = 0x2800;
-const LEAK_THRESHOLD_KB = 2 * 1024 * 1024; // 2 GB language_server = definitely a leak
-const LEAK_CHECK_INTERVAL_MS = 5_000; // Check every 5s
+
+// Read user-configurable settings
+function getConfig() {
+    const cfg = vscode.workspace.getConfiguration('resourceMonitor');
+    return {
+        watchdogEnabled: cfg.get<boolean>('leakWatchdog.enabled', true),
+        thresholdKB: (cfg.get<number>('leakWatchdog.thresholdMB', 2048)) * 1024,
+        checkIntervalMs: (cfg.get<number>('leakWatchdog.checkIntervalSeconds', 5)) * 1000,
+        statusBarIntervalMs: (cfg.get<number>('statusBar.updateIntervalSeconds', 3)) * 1000,
+    };
+}
 
 let leakFlashUntil = 0; // Timestamp until which status bar shows kill notification
 
@@ -1243,9 +1252,13 @@ function startLeakWatchdog(statusItem: vscode.StatusBarItem): void {
     let cachedPid = 0;
     let cacheTime = 0;
     let lastKillTime = 0;
+    const { checkIntervalMs } = getConfig();
 
     setInterval(async () => {
         try {
+            const cfg = getConfig();
+            if (!cfg.watchdogEnabled) { return; }
+
             // Skip if we just killed (cache might still have stale data)
             if (Date.now() - lastKillTime < 10_000) { return; }
 
@@ -1270,7 +1283,7 @@ function startLeakWatchdog(statusItem: vscode.StatusBarItem): void {
             // Refresh cache and check MEM (same data source as dashboard)
             await refreshTopMemCache();
             const info = topMemCache.get(cachedPid);
-            if (info && info.currentKB > LEAK_THRESHOLD_KB) {
+            if (info && info.currentKB > cfg.thresholdKB) {
                 try { process.kill(cachedPid, 'SIGTERM'); } catch { /* already dead */ }
                 cachedPid = 0;
                 lastKillTime = Date.now();
@@ -1280,7 +1293,7 @@ function startLeakWatchdog(statusItem: vscode.StatusBarItem): void {
                 statusItem.backgroundColor = new vscode.ThemeColor('statusBarItem.warningBackground');
             }
         } catch { cachedPid = 0; }
-    }, LEAK_CHECK_INTERVAL_MS);
+    }, checkIntervalMs);
 }
 
 // ============================================================
@@ -1340,7 +1353,7 @@ export function activate(context: vscode.ExtensionContext): void {
     }
 
     updateStatusBar();
-    const statusBarInterval = setInterval(updateStatusBar, STATUS_BAR_POLL_MS);
+    const statusBarInterval = setInterval(updateStatusBar, getConfig().statusBarIntervalMs);
 
     // --- Dashboard auto-refresh ---
     let dashboardRefreshInterval: ReturnType<typeof setInterval> | undefined;

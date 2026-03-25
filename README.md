@@ -1,15 +1,17 @@
+**English** | [中文](./README_CN.md)
+
 # Resource Monitor for Antigravity
 
-A lightweight macOS extension that monitors per-window memory usage, automatically kills leaked `language_server` processes, and provides a full process dashboard for managing all Antigravity workspaces.
+A lightweight macOS extension that monitors per-window memory usage, **automatically detects and kills leaked `language_server` processes**, and provides a full process dashboard for managing all Antigravity workspaces.
 
-> **Why?** Antigravity's `language_server` has a known memory leak triggered by new AI conversations. A single conversation can cause it to consume 10+ GB of memory, freezing your entire system. This extension detects and kills leaked processes automatically, keeping your Mac responsive.
+> **Why?** Antigravity's `language_server` may develop severe memory leaks when starting new AI conversations. A single conversation can cause it to consume 10+ GB of memory, freezing your entire system. This extension detects and kills leaked processes automatically, keeping your Mac responsive.
 
 ## Features
 
 ### Memory Leak Watchdog
 
-- Monitors `language_server` memory every 5 seconds using macOS `top` (matches Activity Monitor values)
-- Automatically kills the process when memory exceeds **2 GB**
+- Monitors `language_server` memory every few seconds using macOS `top` (matches Activity Monitor values)
+- Automatically kills the process when memory exceeds the threshold (default: 2 GB)
 - Antigravity seamlessly restarts a fresh server -- your AI features continue working
 - Subtle status bar notification on kill: shield icon with warning background for 5s
 
@@ -25,7 +27,6 @@ A lightweight macOS extension that monitors per-window memory usage, automatical
 - Full WebView dashboard showing all Antigravity workspaces and processes
 - Close remote workspaces with atomic process tree cleanup
 - Zombie workspace detection and batch kill
-- Workspace labeling and conversation title detection
 
 ## Installation
 
@@ -59,12 +60,24 @@ Reload the Antigravity window to activate.
 When the watchdog kills a leaked server, Antigravity shows error popups ("server crashed unexpectedly"). To suppress them:
 
 ```bash
-# Requires Python 3
-python3 scripts/patch_suppress_crash.py
+python3 scripts/patch_suppress_crash.py           # Apply patches
+python3 scripts/patch_suppress_crash.py --status   # Check patch status
+python3 scripts/patch_suppress_crash.py --restore  # Restore originals
 ```
 
-This patches Antigravity's internal extension.js (backup is created automatically).
+This patches Antigravity's internal files (backups are created automatically).
 Re-run after each Antigravity update.
+
+## Configuration
+
+Search `Resource Monitor` in Antigravity Settings:
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `leakWatchdog.enabled` | `true` | Enable/disable leak watchdog |
+| `leakWatchdog.thresholdMB` | `2048` | Memory threshold (MB) to trigger kill |
+| `leakWatchdog.checkIntervalSeconds` | `5` | Check interval (seconds) |
+| `statusBar.updateIntervalSeconds` | `3` | Status bar refresh interval (seconds) |
 
 ## Requirements
 
@@ -80,40 +93,22 @@ Re-run after each Antigravity update.
 | `Resource Monitor: Show Memory Details` | Alias for Process Dashboard |
 | `Resource Monitor: Toggle Visibility` | Show or hide the status bar indicator |
 
-## How It Works
-
-The watchdog uses a two-phase approach for minimal overhead:
-
-1. **PID Discovery** (every 30s): Finds `language_server_macos_arm` PIDs associated with the current extension host using `ps`
-2. **Memory Check** (every 5s): Reads from a shared `topMemCache` (same data source as the dashboard) to check the process's real memory footprint. The cache refreshes every 5s via `top -l 1`.
-3. **Kill** (on threshold): Sends `SIGTERM` when MEM > 2 GB. Antigravity's built-in recovery restarts a fresh language server within seconds.
-
 ## Changelog
 
 ### v0.4.0
 
-- **Memory leak watchdog**: Automatically detects `language_server_macos_arm` memory leaks and kills the process when MEM exceeds 2 GB
-  - Uses `topMemCache` (same data source as dashboard) for zero-overhead detection
+- **Memory leak watchdog**: Automatically detects `language_server_macos_arm` memory leaks and kills the process when MEM exceeds threshold
+  - Configurable threshold, interval, and enable/disable via Settings
   - Subtle status bar notification with warning background for 5s
-  - 10s kill cooldown to prevent double-trigger from stale cache
-- **Crash notification suppression**: Patch script (`scripts/patch_suppress_crash.py`) suppresses Antigravity error popups
-- **Status bar accuracy**: Now uses `top` MEM (full process tree) instead of `ps` RSS, matching Activity Monitor
+- **Crash notification suppression**: Patch script suppresses Antigravity error popups + integrity warning
+- **Status bar accuracy**: Now uses `top` MEM (full process tree) instead of `ps` RSS
 - **Close workspace guard**: Prevents dashboard crash when closing the hosting workspace
 
-### v0.3.2
+### v0.3.x
 
-- **Auto-reload on cold start**: Automatic reload after activation to clear language_server indexing memory leak
-- **Memory display fix**: Workspace total shows real-time memory instead of peak
-
-### v0.3.1
-
-- **Process attribution**: 3-phase Renderer matching algorithm for accurate per-window process grouping
-- **Process tree filter**: Excludes non-Antigravity Electron apps from the dashboard
-
-### v0.3.0
-
-- **Performance**: Dashboard refresh reduced from approximately 9s to approximately 380ms
-- **Incremental updates**: `postMessage`-based DOM updates preserve expand/collapse state
+- Auto-reload on cold start for language_server leak mitigation
+- Process attribution with 3-phase Renderer matching algorithm
+- Dashboard performance: reduced from approximately 9s to approximately 380ms
 
 ### v0.2.0
 
