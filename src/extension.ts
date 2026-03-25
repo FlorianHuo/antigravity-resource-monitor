@@ -1239,9 +1239,10 @@ function generateSparkline(history: number[]): string {
 // language_server_macos_arm leaks memory on new AI conversations.
 // Uses topMemCache (already refreshed in background for dashboard/status bar)
 // to check MEM. Zero overhead: just a Map lookup every 3s.
-function startLeakWatchdog(): void {
+function startLeakWatchdog(statusItem: vscode.StatusBarItem): void {
     let cachedPid = 0;
     let cacheTime = 0;
+    let flashTimer: ReturnType<typeof setTimeout> | undefined;
 
     setInterval(async () => {
         try {
@@ -1267,8 +1268,16 @@ function startLeakWatchdog(): void {
             await refreshTopMemCache();
             const info = topMemCache.get(cachedPid);
             if (info && info.currentKB > LEAK_THRESHOLD_KB) {
+                const memGB = (info.currentKB / (1024 * 1024)).toFixed(1);
                 try { process.kill(cachedPid, 'SIGTERM'); } catch { /* already dead */ }
                 cachedPid = 0;
+                // Flash status bar for 5 seconds
+                if (flashTimer) { clearTimeout(flashTimer); }
+                statusItem.text = `$(warning) Leak killed (${memGB} GB)`;
+                statusItem.backgroundColor = new vscode.ThemeColor('statusBarItem.warningBackground');
+                flashTimer = setTimeout(() => {
+                    statusItem.backgroundColor = undefined;
+                }, 5000);
             }
         } catch { cachedPid = 0; }
     }, LEAK_CHECK_INTERVAL_MS);
@@ -1290,7 +1299,7 @@ export function activate(context: vscode.ExtensionContext): void {
     // Register self immediately and when editors change
     registerSelf();
     refreshTopMemCache(); // Eagerly populate top MEM cache for accurate dashboard
-    startLeakWatchdog();
+    startLeakWatchdog(statusItem);
     const registryInterval = setInterval(registerSelf, 30000);
     const editorListener = vscode.window.onDidChangeActiveTextEditor(() => registerSelf());
 
