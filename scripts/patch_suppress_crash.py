@@ -2,11 +2,11 @@
 """
 Suppress Antigravity's server crash notifications.
 
-When our watchdog kills a leaked language_server, Antigravity shows 3 error
+When our watchdog kills a leaked language_server, Antigravity shows error
 popups. This patch suppresses all of them:
   1. "Antigravity server crashed unexpectedly. Please restart..."
   2. "Restarting server failed"
-  3. "couldn't create connection to server."
+  3. "antigravity client: couldn't create connection to server."
 
 Usage: python3 scripts/patch_suppress_crash.py
        python3 scripts/patch_suppress_crash.py --restore
@@ -28,8 +28,11 @@ REPLACEMENTS = [
     ),
     # 2. error() call for restart failure
     ('this.error("Restarting server failed",e,"force")', 'void 0'),
-    # 3. error message string for connection failure
-    ("couldn't create connection to server.", ''),
+    # 3. error() call for connection failure (keep n(e) for promise rejection)
+    (
+        "this.error(`${this._name} client: couldn't create connection to server.`,e,\"force\"),n(e)",
+        'n(e)',
+    ),
 ]
 
 
