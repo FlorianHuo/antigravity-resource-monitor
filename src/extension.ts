@@ -1541,10 +1541,17 @@ export function activate(context: vscode.ExtensionContext): void {
     const editorListener = vscode.window.onDidChangeActiveTextEditor(() => registerSelf());
 
     let statusBarUpdating = false;
+    let statusBarUpdateStart = 0;
     async function updateStatusBar(): Promise<void> {
-        if (!isVisible || statusBarUpdating) { return; }
+        if (!isVisible) { return; }
         if (Date.now() < leakFlashUntil) { return; } // Skip during leak kill flash
+        // Safety: if previous update has been running > 10s, force-reset the lock
+        if (statusBarUpdating && Date.now() - statusBarUpdateStart > 10_000) {
+            statusBarUpdating = false;
+        }
+        if (statusBarUpdating) { return; }
         statusBarUpdating = true;
+        statusBarUpdateStart = Date.now();
         try {
         // Use the same metric as the dashboard: ext host + children RSS
         const totalKB = await getCurrentWindowMemoryKB();
