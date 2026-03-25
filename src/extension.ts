@@ -957,6 +957,39 @@ function generateDashboardShell(): string {
     .header-actions { display: flex; gap: 8px; align-items: center; }
     .auto-refresh-label { font-size: 11px; opacity: 0.4; }
     .loading { text-align: center; padding: 40px; opacity: 0.5; }
+
+    /* Settings panel */
+    .settings-section {
+        margin-top: 16px; border-top: 1px solid var(--border); padding-top: 12px;
+    }
+    .settings-toggle {
+        display: flex; align-items: center; gap: 6px; cursor: pointer;
+        font-size: 12px; opacity: 0.5; transition: opacity 0.15s;
+        background: none; border: none; color: var(--fg); padding: 4px 0;
+    }
+    .settings-toggle:hover { opacity: 0.8; }
+    .settings-toggle .chevron { transition: transform 0.2s; display: inline-block; }
+    .settings-toggle .chevron.open { transform: rotate(90deg); }
+    .settings-grid {
+        display: grid; grid-template-columns: 1fr auto;
+        gap: 8px 16px; align-items: center;
+        padding: 12px; margin-top: 8px;
+        background: var(--card-bg); border: 1px solid var(--border); border-radius: 6px;
+    }
+    .settings-grid.hidden { display: none; }
+    .settings-grid label { font-size: 12px; }
+    .settings-grid .desc { font-size: 11px; opacity: 0.45; grid-column: 1 / -1; margin-top: -4px; margin-bottom: 4px; }
+    .settings-grid input[type="number"] {
+        width: 80px; padding: 3px 6px; font-size: 12px;
+        background: var(--bg); color: var(--fg); border: 1px solid var(--border);
+        border-radius: 3px; text-align: right;
+    }
+    .settings-grid input[type="checkbox"] { width: 16px; height: 16px; cursor: pointer; }
+    .settings-saved {
+        font-size: 11px; color: #4ec44e; opacity: 0; transition: opacity 0.3s;
+        margin-left: 8px;
+    }
+    .settings-saved.show { opacity: 1; }
 </style>
 </head>
 <body>
@@ -975,6 +1008,26 @@ function generateDashboardShell(): string {
     <div id="zombie-bar-container"></div>
     <div id="workspaces-container"><div class="loading">Scanning processes...</div></div>
     <div id="shared-container"></div>
+    <div class="settings-section">
+        <button class="settings-toggle" id="settings-toggle">
+            <span class="chevron" id="settings-chevron">&#9654;</span>
+            Settings
+            <span class="settings-saved" id="settings-saved">Saved</span>
+        </button>
+        <div class="settings-grid hidden" id="settings-panel">
+            <label>Leak monitor enabled</label>
+            <input type="checkbox" id="cfg-enabled">
+
+            <label>Memory threshold (MB)</label>
+            <input type="number" id="cfg-threshold" min="512" max="16384" step="256">
+
+            <label>Check interval (seconds)</label>
+            <input type="number" id="cfg-interval" min="1" max="60" step="1">
+
+            <label>Status bar refresh (seconds)</label>
+            <input type="number" id="cfg-statusbar" min="1" max="30" step="1">
+        </div>
+    </div>
     <script nonce="${nonce}">
     (function() {
         try {
@@ -1156,6 +1209,47 @@ function generateDashboardShell(): string {
                 vscode.postMessage({ command: 'rename', name: target.dataset.name });
             } else if (action === 'killZombies') {
                 vscode.postMessage({ command: 'killZombies', pids: target.dataset.pids });
+            }
+        });
+
+        // --- Settings panel ---
+        var settingsOpen = false;
+        document.getElementById('settings-toggle').addEventListener('click', function() {
+            settingsOpen = !settingsOpen;
+            document.getElementById('settings-panel').classList.toggle('hidden', !settingsOpen);
+            document.getElementById('settings-chevron').classList.toggle('open', settingsOpen);
+            if (settingsOpen) { vscode.postMessage({ command: 'getSettings' }); }
+        });
+
+        function flashSaved() {
+            var el = document.getElementById('settings-saved');
+            el.classList.add('show');
+            setTimeout(function() { el.classList.remove('show'); }, 1500);
+        }
+
+        ['cfg-enabled','cfg-threshold','cfg-interval','cfg-statusbar'].forEach(function(id) {
+            document.getElementById(id).addEventListener('change', function() {
+                vscode.postMessage({
+                    command: 'updateSettings',
+                    enabled: document.getElementById('cfg-enabled').checked,
+                    thresholdMB: parseInt(document.getElementById('cfg-threshold').value) || 2048,
+                    checkInterval: parseInt(document.getElementById('cfg-interval').value) || 5,
+                    statusBarInterval: parseInt(document.getElementById('cfg-statusbar').value) || 3
+                });
+            });
+        });
+
+        // Handle settings data from extension
+        var origHandler = window.addEventListener;
+        window.addEventListener('message', function(event) {
+            var msg = event.data;
+            if (msg.command === 'settings') {
+                document.getElementById('cfg-enabled').checked = msg.enabled;
+                document.getElementById('cfg-threshold').value = msg.thresholdMB;
+                document.getElementById('cfg-interval').value = msg.checkInterval;
+                document.getElementById('cfg-statusbar').value = msg.statusBarInterval;
+            } else if (msg.command === 'settingsSaved') {
+                flashSaved();
             }
         });
 
@@ -1481,6 +1575,22 @@ export function activate(context: vscode.ExtensionContext): void {
                     setCustomLabel(msg.name, newLabel);
                     refreshDashboard();
                 }
+            } else if (msg.command === 'getSettings') {
+                const cfg = vscode.workspace.getConfiguration('resourceMonitor');
+                dashboardPanel!.webview.postMessage({
+                    command: 'settings',
+                    enabled: cfg.get<boolean>('leakWatchdog.enabled', true),
+                    thresholdMB: cfg.get<number>('leakWatchdog.thresholdMB', 2048),
+                    checkInterval: cfg.get<number>('leakWatchdog.checkIntervalSeconds', 5),
+                    statusBarInterval: cfg.get<number>('statusBar.updateIntervalSeconds', 3),
+                });
+            } else if (msg.command === 'updateSettings') {
+                const cfg = vscode.workspace.getConfiguration('resourceMonitor');
+                await cfg.update('leakWatchdog.enabled', msg.enabled, vscode.ConfigurationTarget.Global);
+                await cfg.update('leakWatchdog.thresholdMB', msg.thresholdMB, vscode.ConfigurationTarget.Global);
+                await cfg.update('leakWatchdog.checkIntervalSeconds', msg.checkInterval, vscode.ConfigurationTarget.Global);
+                await cfg.update('statusBar.updateIntervalSeconds', msg.statusBarInterval, vscode.ConfigurationTarget.Global);
+                dashboardPanel!.webview.postMessage({ command: 'settingsSaved' });
             }
         });
 
