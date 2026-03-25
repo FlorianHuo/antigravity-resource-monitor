@@ -1472,11 +1472,12 @@ function startLeakWatchdog(statusItem: vscode.StatusBarItem): void {
             await refreshTopMemCache();
             const info = topMemCache.get(cachedPid);
             if (info && info.currentKB > cfg.thresholdKB) {
-                try { process.kill(cachedPid, 'SIGTERM'); } catch { /* already dead */ }
+                const killedPid = cachedPid;
+                try { process.kill(killedPid, 'SIGTERM'); } catch { /* already dead */ }
                 cachedPid = 0;
                 lastKillTime = Date.now();
-                // Reset stale memory data so status bar won't flash old value after flash
-                topMemCache.clear();
+                // Remove only the killed process from cache (don't clear everything)
+                topMemCache.delete(killedPid);
                 memoryHistory.length = 0;
                 // Flash status bar for 2 seconds (updateStatusBar skips during flash)
                 leakFlashUntil = Date.now() + 2000;
