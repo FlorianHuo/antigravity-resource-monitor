@@ -1395,11 +1395,18 @@ export function activate(context: vscode.ExtensionContext): void {
                 } catch { /* ignore */ }
                 setTimeout(refreshDashboard, 1500);
             } else if (msg.command === 'closeWorkspace') {
-                // Kill ALL processes in this workspace group
+                // Kill ALL processes atomically in one shell command
+                // to prevent Antigravity from respawning them between kills
                 const pids = (msg.pids as string).split(',').map(Number);
-                for (const pid of pids) {
-                    try { killProcessTree(pid); } catch { /* ignore */ }
-                }
+                try {
+                    execSync(`kill -9 ${pids.join(' ')} 2>/dev/null; true`, { timeout: 3000 });
+                } catch { /* some may already be dead */ }
+                // Second pass: catch any children that were missed
+                setTimeout(() => {
+                    for (const pid of pids) {
+                        try { killProcessTree(pid); } catch { /* ignore */ }
+                    }
+                }, 500);
                 // Clean up registry entry
                 try {
                     const registry = readRegistry();
@@ -1409,7 +1416,7 @@ export function activate(context: vscode.ExtensionContext): void {
                     }
                 } catch { /* ignore */ }
                 vscode.window.showInformationMessage(`Workspace "${msg.name}" closed (${pids.length} processes killed).`);
-                setTimeout(refreshDashboard, 1500);
+                setTimeout(refreshDashboard, 2000);
             } else if (msg.command === 'killZombies') {
                 const pids = (msg.pids as string).split(',').map(Number);
                 for (const pid of pids) {
