@@ -1,10 +1,6 @@
 [English](./README.md) | **中文**
 
-<h1 align="center">
-  <br>
-  Antigravity 资源监控器
-  <br>
-</h1>
+<h1 align="center">Antigravity 资源监控器</h1>
 
 <p align="center">
   <strong>实时内存监控 &middot; 泄漏自动清理 &middot; 进程管理面板</strong>

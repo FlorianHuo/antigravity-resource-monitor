@@ -1,10 +1,6 @@
 **English** | [中文](./README_CN.md)
 
-<h1 align="center">
-  <br>
-  Resource Monitor for Antigravity
-  <br>
-</h1>
+<h1 align="center">Resource Monitor for Antigravity</h1>
 
 <p align="center">
   <strong>Real-time memory monitoring &middot; Leak auto-fix &middot; Process dashboard</strong>
