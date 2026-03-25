@@ -1242,10 +1242,14 @@ function generateSparkline(history: number[]): string {
 function startLeakWatchdog(statusItem: vscode.StatusBarItem): void {
     let cachedPid = 0;
     let cacheTime = 0;
+    let lastKillTime = 0;
     let flashTimer: ReturnType<typeof setTimeout> | undefined;
 
     setInterval(async () => {
         try {
+            // Skip if we just killed (cache might still have stale data)
+            if (Date.now() - lastKillTime < 10_000) { return; }
+
             const myPid = process.pid;
             // Refresh PID cache every 30s or if stale
             if (!cachedPid || Date.now() - cacheTime > 30_000) {
@@ -1268,12 +1272,11 @@ function startLeakWatchdog(statusItem: vscode.StatusBarItem): void {
             await refreshTopMemCache();
             const info = topMemCache.get(cachedPid);
             if (info && info.currentKB > LEAK_THRESHOLD_KB) {
-                const memGB = (info.currentKB / (1024 * 1024)).toFixed(1);
                 try { process.kill(cachedPid, 'SIGTERM'); } catch { /* already dead */ }
                 cachedPid = 0;
-                // Flash status bar for 5 seconds
+                lastKillTime = Date.now();
+                // Flash status bar background only (no text change to avoid width shift)
                 if (flashTimer) { clearTimeout(flashTimer); }
-                statusItem.text = `$(shield) ${memGB}G fixed`;
                 statusItem.backgroundColor = new vscode.ThemeColor('statusBarItem.warningBackground');
                 flashTimer = setTimeout(() => {
                     statusItem.backgroundColor = undefined;
