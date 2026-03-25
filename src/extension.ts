@@ -1236,46 +1236,43 @@ function generateSparkline(history: number[]): string {
 // Auto-reload on language_server memory leak
 // ============================================================
 
-// The first AI conversation in a cold workspace triggers a memory leak
-// in language_server_macos_arm. Reloading the window AFTER the leak
-// clears it; subsequent conversations don't leak. This watchdog polls
-// language_server MEM (via top, matching Activity Monitor) and auto-reloads
-// when it exceeds the threshold. We use top instead of ps because macOS
-// compresses leaked pages, so RSS stays low while real usage is huge.
+// language_server_macos_arm leaks memory on new AI conversations.
+// This watchdog polls RSS every 3s using lightweight ps -o rss (instant,
+// no full process scan). Kills leaked language_server immediately.
 function startLeakWatchdog(): void {
+    let cachedPid = 0;
+    let cacheTime = 0;
+
     setInterval(async () => {
         try {
             const myPid = process.pid;
-            const raw = await execAsync(
-                `ps -eo pid,command | grep language_server_macos_arm | grep -v grep`,
-                3000
-            );
-            const langServerPids: number[] = [];
-            for (const line of raw.trim().split('\n')) {
-                const parts = line.trim().split(/\s+/);
-                if (parts.length < 2) { continue; }
-                const pid = parseInt(parts[0]);
-                if (Math.abs(pid - myPid) < 500) {
-                    langServerPids.push(pid);
+            // Refresh PID cache every 30s or if stale
+            if (!cachedPid || Date.now() - cacheTime > 30_000) {
+                const raw = await execAsync(
+                    `ps -eo pid,command | grep language_server_macos_arm | grep -v grep`,
+                    2000
+                );
+                for (const line of raw.trim().split('\n')) {
+                    const pid = parseInt(line.trim());
+                    if (pid > 0 && Math.abs(pid - myPid) < 500) {
+                        cachedPid = pid;
+                        cacheTime = Date.now();
+                        break;
+                    }
                 }
-            }
-            if (langServerPids.length === 0) { return; }
-
-            await refreshTopMemCache();
-            let maxMemKB = 0;
-            for (const pid of langServerPids) {
-                const info = topMemCache.get(pid);
-                if (info && info.currentKB > maxMemKB) {
-                    maxMemKB = info.currentKB;
-                }
+                if (!cachedPid) { return; }
             }
 
-            if (maxMemKB > LEAK_THRESHOLD_KB) {
-                for (const pid of langServerPids) {
-                    try { process.kill(pid, 'SIGKILL'); } catch { /* already dead */ }
-                }
+            // Lightweight RSS check (single process, instant)
+            const rssRaw = await execAsync(`ps -o rss= -p ${cachedPid}`, 1000);
+            const rssKB = parseInt(rssRaw.trim());
+            if (isNaN(rssKB)) { cachedPid = 0; return; } // Process died, re-scan
+
+            if (rssKB > LEAK_THRESHOLD_KB) {
+                try { process.kill(cachedPid, 'SIGKILL'); } catch { /* already dead */ }
+                cachedPid = 0; // Force re-scan next cycle
             }
-        } catch { /* skip this cycle */ }
+        } catch { cachedPid = 0; } // Reset cache on any error
     }, LEAK_CHECK_INTERVAL_MS);
 }
 
