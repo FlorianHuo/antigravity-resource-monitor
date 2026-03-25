@@ -1267,7 +1267,7 @@ function startLeakWatchdog(): void {
             await refreshTopMemCache();
             const info = topMemCache.get(cachedPid);
             if (info && info.currentKB > LEAK_THRESHOLD_KB) {
-                try { process.kill(cachedPid, 'SIGKILL'); } catch { /* already dead */ }
+                try { process.kill(cachedPid, 'SIGTERM'); } catch { /* already dead */ }
                 cachedPid = 0;
             }
         } catch { cachedPid = 0; }
