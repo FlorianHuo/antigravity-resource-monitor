@@ -1178,7 +1178,12 @@ function generateDashboardShell(): string {
             var zombieEl = document.getElementById('zombie-bar-container');
             if (zombies.length > 0) {
                 var zombieMemKB = zombies.reduce(function(s,z) { return s + z.totalMemoryKB; }, 0);
-                var zombiePids = zombies.map(function(z) { return z.extHostPid; }).join(',');
+                var zombiePids = [];
+                zombies.forEach(function(z) {
+                    zombiePids.push(z.extHostPid);
+                    z.processList.forEach(function(p) { zombiePids.push(p.pid); });
+                });
+                zombiePids = zombiePids.join(',');
                 zombieEl.innerHTML = '<div class="zombie-bar">'
                     + '<span><b>' + zombies.length + '</b> zombie playground(s) using <b>' + fmtBytes(zombieMemKB * 1024) + '</b> (unnamed, empty)</span>'
                     + '<button class="zombie-kill-btn" data-action="killZombies" data-pids="' + zombiePids + '">Kill All Zombies</button>'
@@ -1709,20 +1714,28 @@ export function activate(context: vscode.ExtensionContext): void {
                     setTimeout(refreshDashboard, 2000);
                 }
             } else if (msg.command === 'killZombies') {
-                const pids = (msg.pids as string).split(',').map(Number);
+                const pids = [...new Set((msg.pids as string).split(',').map(Number))];
+                // SIGTERM first so the zombie window closes gracefully
+                // (SIGKILL triggers Antigravity's crash recovery dialog)
                 for (const pid of pids) {
-                    try { killProcessTree(pid); }
-                    catch { /* ignore */ }
-                    // Remove killed PIDs and their children from cache
-                    for (const [cachedPid] of topMemCache) {
-                        try { process.kill(cachedPid, 0); } // Check if alive
-                        catch { topMemCache.delete(cachedPid); } // Dead, remove
-                    }
+                    if (pid <= 1) { continue; }
+                    try { process.kill(pid, 'SIGTERM'); }
+                    catch { /* already dead */ }
                 }
-                vscode.window.showInformationMessage(`Killed ${pids.length} zombie workspace(s).`);
-                // Refresh twice: once after processes die, once after top cache updates
-                setTimeout(refreshDashboard, 2000);
-                setTimeout(refreshDashboard, 4000);
+                // SIGKILL any survivors after 2s
+                setTimeout(() => {
+                    for (const pid of pids) {
+                        if (pid <= 1) { continue; }
+                        try { process.kill(pid, 'SIGKILL'); }
+                        catch { /* already dead */ }
+                    }
+                    // Purge dead PIDs from top cache
+                    for (const [cachedPid] of topMemCache) {
+                        try { process.kill(cachedPid, 0); }
+                        catch { topMemCache.delete(cachedPid); }
+                    }
+                }, 2000);
+                setTimeout(refreshDashboard, 3000);
             } else if (msg.command === 'rename') {
                 const newLabel = await vscode.window.showInputBox({
                     prompt: `Label for "${msg.name}"`,
