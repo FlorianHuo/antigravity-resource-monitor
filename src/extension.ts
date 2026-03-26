@@ -1181,7 +1181,10 @@ function generateDashboardShell(): string {
                 var zombiePids = [];
                 zombies.forEach(function(z) {
                     zombiePids.push(z.extHostPid);
-                    z.processList.forEach(function(p) { zombiePids.push(p.pid); });
+                    z.processList.forEach(function(p) {
+                        // Skip Renderer/GPU: killing them triggers the crash recovery dialog
+                        if (p.type !== 'Renderer' && p.type !== 'GPU') { zombiePids.push(p.pid); }
+                    });
                 });
                 zombiePids = zombiePids.join(',');
                 zombieEl.innerHTML = '<div class="zombie-bar">'
@@ -1715,27 +1718,22 @@ export function activate(context: vscode.ExtensionContext): void {
                 }
             } else if (msg.command === 'killZombies') {
                 const pids = [...new Set((msg.pids as string).split(',').map(Number))];
-                // SIGTERM first so the zombie window closes gracefully
-                // (SIGKILL triggers Antigravity's crash recovery dialog)
+                // Kill only ExtHost + worker children (Renderers are excluded
+                // on the client side to avoid crash recovery dialogs).
+                // Use SIGKILL for instant, silent cleanup.
                 for (const pid of pids) {
                     if (pid <= 1) { continue; }
-                    try { process.kill(pid, 'SIGTERM'); }
+                    try { process.kill(pid, 'SIGKILL'); }
                     catch { /* already dead */ }
                 }
-                // SIGKILL any survivors after 2s
+                // Purge dead PIDs from top cache after processes die
                 setTimeout(() => {
-                    for (const pid of pids) {
-                        if (pid <= 1) { continue; }
-                        try { process.kill(pid, 'SIGKILL'); }
-                        catch { /* already dead */ }
-                    }
-                    // Purge dead PIDs from top cache
                     for (const [cachedPid] of topMemCache) {
                         try { process.kill(cachedPid, 0); }
                         catch { topMemCache.delete(cachedPid); }
                     }
-                }, 2000);
-                setTimeout(refreshDashboard, 3000);
+                }, 1000);
+                setTimeout(refreshDashboard, 2000);
             } else if (msg.command === 'rename') {
                 const newLabel = await vscode.window.showInputBox({
                     prompt: `Label for "${msg.name}"`,
