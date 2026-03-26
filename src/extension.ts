@@ -511,19 +511,31 @@ function getTopMem(pids: number[]): Map<number, TopMemInfo> {
  * Kills bottom-up so children die before parents, preventing orphan adoption.
  */
 function killProcessTree(pid: number): void {
-    try {
-        // Find all direct children of this PID
-        const childrenRaw = execSync(`pgrep -P ${pid}`, { encoding: 'utf8', timeout: 2000 }).trim();
-        if (childrenRaw) {
-            for (const childPid of childrenRaw.split('\n').map(Number)) {
-                if (childPid > 0) { killProcessTree(childPid); }
+    // Collect all descendant PIDs first, then kill bottom-up
+    // This prevents orphaning: if we kill parent first, children get
+    // reparented to PID 1 and become invisible to pgrep -P.
+    const pidsToKill: number[] = [];
+    function collectDescendants(p: number): void {
+        try {
+            const childrenRaw = execSync(`pgrep -P ${p}`, { encoding: 'utf8', timeout: 2000 }).trim();
+            if (childrenRaw) {
+                for (const childPid of childrenRaw.split('\n').map(Number)) {
+                    if (childPid > 0) {
+                        collectDescendants(childPid);
+                        pidsToKill.push(childPid);
+                    }
+                }
             }
-        }
+        } catch { /* no children */ }
     }
-    catch { /* no children, or pgrep failed */ }
+    collectDescendants(pid);
+    pidsToKill.push(pid); // Parent last
 
-    try { process.kill(pid, 'SIGKILL'); }
-    catch { /* already dead */ }
+    // Kill all collected PIDs (children first, parent last)
+    for (const p of pidsToKill) {
+        try { process.kill(p, 'SIGKILL'); }
+        catch { /* already dead */ }
+    }
 }
 
 function classifySharedProcess(command: string): string {
