@@ -2,3 +2,5 @@ node_modules/
 out/
 *.vsix
 .vscode-test/
+.DS_Store
+FORUM_POST.md
