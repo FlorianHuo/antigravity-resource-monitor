@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """
-Suppress Antigravity's server crash notifications and integrity warning.
+Suppress Antigravity's server crash notifications, renderer crash dialog,
+and integrity warning.
 
-When our watchdog kills a leaked language_server, Antigravity shows error
+When our watchdog/zombie-killer terminates processes, Antigravity shows error
 popups. This patch suppresses all of them AND the "installation corrupt"
 warning that appears after modifying Antigravity's internal files.
 
@@ -11,6 +12,8 @@ Suppressed notifications:
   2. "Restarting server failed"
   3. "antigravity client: couldn't create connection to server."
   4. "Installation corrupt / reinstall" integrity warning
+  5. "The window terminated unexpectedly (reason: 'killed', code: '15')"
+     renderer crash dialog (Reopen/Close) in main.js
 
 Usage: python3 scripts/patch_suppress_crash.py
        python3 scripts/patch_suppress_crash.py --restore
@@ -32,6 +35,9 @@ EXTENSION_BACKUP = EXTENSION_JS + '.bak'
 WORKBENCH_JS = '/Applications/Antigravity.app/Contents/Resources/app/out/vs/workbench/workbench.desktop.main.js'
 WORKBENCH_BACKUP = WORKBENCH_JS + '.bak'
 
+MAIN_JS = '/Applications/Antigravity.app/Contents/Resources/app/out/main.js'
+MAIN_BACKUP = MAIN_JS + '.bak'
+
 PRODUCT_JSON = '/Applications/Antigravity.app/Contents/Resources/app/product.json'
 CHECKSUM_KEY = 'vs/workbench/workbench.desktop.main.js'
 
@@ -52,6 +58,24 @@ EXTENSION_REPLACEMENTS = [
         'n(e)',
     ),
 ]
+
+# Replacement in main.js (renderer crash dialog)
+# When renderer dies (case t===2), the original code shows a dialog with
+# Reopen/Close buttons. We replace it with silent window destruction.
+MAIN_RENDERER_CRASH_OLD = (
+    'else if(t===2){let n;r?n=Ee(2783,null,r.reason,r.exitCode??'
+    '"<unknown>"):n=Ee(2782,null);const{response:a,checkboxChecked:s}='
+    'await this.Bb.showMessageBox({type:"warning",buttons:[this.bb?.workspace?'
+    'Ee(2784,null):Ee(2785,null),Ee(2786,null)],message:n,detail:'
+    'this.bb?.workspace?Ee(2787,null):Ee(2788,null),checkboxLabel:'
+    'this.bb?.workspace?Ee(2789,null):void 0},this.s),l=a===0;'
+    'await this.Kb(l,s)}'
+)
+
+# Silent replacement: just destroy the window, no dialog
+MAIN_RENDERER_CRASH_NEW = (
+    'else if(t===2){this.s?.destroy()}'
+)
 
 
 def compute_checksum(filepath):
@@ -112,6 +136,32 @@ def suppress_integrity_warning():
         return False
 
 
+def patch_main_js():
+    """Suppress the renderer crash dialog in main.js."""
+    print('=== Patching main.js (renderer crash dialog) ===')
+
+    if not os.path.exists(MAIN_JS):
+        print(f'  WARNING: {MAIN_JS} not found')
+        return
+
+    with open(MAIN_JS, 'r', errors='replace') as f:
+        content = f.read()
+
+    if MAIN_RENDERER_CRASH_OLD in content:
+        if not os.path.exists(MAIN_BACKUP):
+            shutil.copy2(MAIN_JS, MAIN_BACKUP)
+            print(f'  Backup: {MAIN_BACKUP}')
+
+        content = content.replace(MAIN_RENDERER_CRASH_OLD, MAIN_RENDERER_CRASH_NEW)
+        with open(MAIN_JS, 'w') as f:
+            f.write(content)
+        print('  Suppressed: renderer crash dialog (window terminated unexpectedly)')
+    elif MAIN_RENDERER_CRASH_NEW in content:
+        print('  Renderer crash dialog: already suppressed')
+    else:
+        print('  WARNING: Renderer crash dialog pattern not found (Antigravity may have updated)')
+
+
 def patch():
     """Apply all patches."""
     print('=== Patching extension.js (crash notifications) ===')
@@ -138,6 +188,9 @@ def patch():
         print('  All crash notifications already suppressed.')
 
     print()
+    patch_main_js()
+
+    print()
     print('=== Patching workbench.js (integrity warning) ===')
     suppress_integrity_warning()
 
@@ -151,6 +204,10 @@ def restore():
     if os.path.exists(EXTENSION_BACKUP):
         shutil.copy2(EXTENSION_BACKUP, EXTENSION_JS)
         print(f'Restored: {EXTENSION_JS}')
+        restored += 1
+    if os.path.exists(MAIN_BACKUP):
+        shutil.copy2(MAIN_BACKUP, MAIN_JS)
+        print(f'Restored: {MAIN_JS}')
         restored += 1
     if os.path.exists(WORKBENCH_BACKUP):
         shutil.copy2(WORKBENCH_BACKUP, WORKBENCH_JS)
@@ -177,6 +234,16 @@ def status():
             print(f'  [ ] {label}...')
         else:
             print(f'  [x] {label}...')
+
+    if os.path.exists(MAIN_JS):
+        with open(MAIN_JS, 'r', errors='replace') as f:
+            mjs = f.read()
+        if MAIN_RENDERER_CRASH_NEW in mjs:
+            print('  [x] Renderer crash dialog suppressed')
+        elif MAIN_RENDERER_CRASH_OLD in mjs:
+            print('  [ ] Renderer crash dialog NOT suppressed')
+        else:
+            print('  [?] Renderer crash dialog pattern not found')
 
     with open(WORKBENCH_JS, 'r', errors='replace') as f:
         wb = f.read()

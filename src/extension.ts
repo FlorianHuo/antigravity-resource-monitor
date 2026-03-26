@@ -1181,10 +1181,7 @@ function generateDashboardShell(): string {
                 var zombiePids = [];
                 zombies.forEach(function(z) {
                     zombiePids.push(z.extHostPid);
-                    z.processList.forEach(function(p) {
-                        // Skip Renderer/GPU: killing them triggers the crash recovery dialog
-                        if (p.type !== 'Renderer' && p.type !== 'GPU') { zombiePids.push(p.pid); }
-                    });
+                    z.processList.forEach(function(p) { zombiePids.push(p.pid); });
                 });
                 zombiePids = zombiePids.join(',');
                 zombieEl.innerHTML = '<div class="zombie-bar">'
