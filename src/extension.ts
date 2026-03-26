@@ -1722,34 +1722,36 @@ export function activate(context: vscode.ExtensionContext): void {
             } else if (msg.command === 'killZombies') {
                 const pids = [...new Set((msg.pids as string).split(',').map(Number))];
                 const names = decodeURIComponent(msg.names as string || '').split('|').filter(Boolean);
-                // Kill ExtHost + worker children (memory reclaim)
-                for (const pid of pids) {
-                    if (pid <= 1) { continue; }
-                    try { process.kill(pid, 'SIGKILL'); }
-                    catch { /* already dead */ }
-                }
-                // Close zombie windows by title via AppleScript (reliable,
-                // no PID heuristics needed - matches window title directly)
+                // Step 1: Close windows FIRST via AppleScript (graceful shutdown).
+                // This lets Antigravity cleanly terminate ExtHost, Renderer, and
+                // all children. Must happen BEFORE SIGKILL to avoid crashing the
+                // window into an unresponsive state.
                 if (process.platform === 'darwin' && names.length > 0) {
-                    for (const name of names) {
+                    const closePromises = names.map(name => {
                         const escaped = name.replace(/["\\/]/g, '');
-                        try {
-                            await execAsync(
-                                `osascript -e 'tell application "System Events" to tell process "Antigravity" to close (first window whose title contains "${escaped}")'`,
-                                5000
-                            );
-                        } catch { /* window might already be gone */ }
-                    }
+                        return execAsync(
+                            `osascript -e 'tell application "System Events" to tell process "Antigravity" to close (first window whose title contains "${escaped}")'`,
+                            5000
+                        ).catch(() => {});
+                    });
+                    await Promise.all(closePromises);
                 }
-                // Purge dead PIDs from top cache then refresh dashboard
+                // Step 2: SIGKILL any surviving processes as safety net
+                // (in case AppleScript close didn't fully terminate them)
                 setTimeout(() => {
+                    for (const pid of pids) {
+                        if (pid <= 1) { continue; }
+                        try { process.kill(pid, 'SIGKILL'); }
+                        catch { /* already dead */ }
+                    }
+                    // Purge dead PIDs from top cache
                     for (const [cachedPid] of topMemCache) {
                         try { process.kill(cachedPid, 0); }
                         catch { topMemCache.delete(cachedPid); }
                     }
                     refreshDashboard();
-                }, 1500);
-                setTimeout(refreshDashboard, 4000);
+                }, 2000);
+                setTimeout(refreshDashboard, 5000);
             } else if (msg.command === 'rename') {
                 const newLabel = await vscode.window.showInputBox({
                     prompt: `Label for "${msg.name}"`,
