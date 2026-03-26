@@ -1179,11 +1179,12 @@ function generateDashboardShell(): string {
             if (zombies.length > 0) {
                 var zombieMemKB = zombies.reduce(function(s,z) { return s + z.totalMemoryKB; }, 0);
                 var zombiePids = [];
+                var zombieNames = [];
                 zombies.forEach(function(z) {
+                    zombieNames.push(z.name);
                     z.processList.forEach(function(p) {
-                        // SAFETY: only kill ExtHost + worker children.
-                        // Never kill Renderer/GPU/Main -- their PID attribution
-                        // is heuristic and can be WRONG, destroying real windows.
+                        // Only kill ExtHost + worker children (no Renderers).
+                        // Window closing is handled by AppleScript via title.
                         if (p.type === 'Renderer' || p.type === 'GPU' || p.type === 'Main' || p.type === 'Other') { return; }
                         zombiePids.push(p.pid);
                     });
@@ -1191,7 +1192,7 @@ function generateDashboardShell(): string {
                 zombiePids = zombiePids.join(',');
                 zombieEl.innerHTML = '<div class="zombie-bar">'
                     + '<span><b>' + zombies.length + '</b> zombie playground(s) using <b>' + fmtBytes(zombieMemKB * 1024) + '</b> (unnamed, empty)</span>'
-                    + '<button class="zombie-kill-btn" data-action="killZombies" data-pids="' + zombiePids + '">Kill All Zombies</button>'
+                    + '<button class="zombie-kill-btn" data-action="killZombies" data-pids="' + zombiePids + '" data-names="' + encodeURIComponent(zombieNames.join('|')) + '">Kill All Zombies</button>'
                     + '</div>';
             } else {
                 zombieEl.innerHTML = '';
@@ -1321,7 +1322,7 @@ function generateDashboardShell(): string {
             } else if (action === 'rename') {
                 vscode.postMessage({ command: 'rename', name: target.dataset.name });
             } else if (action === 'killZombies') {
-                vscode.postMessage({ command: 'killZombies', pids: target.dataset.pids });
+                vscode.postMessage({ command: 'killZombies', pids: target.dataset.pids, names: target.dataset.names });
             }
         });
 
@@ -1720,12 +1721,25 @@ export function activate(context: vscode.ExtensionContext): void {
                 }
             } else if (msg.command === 'killZombies') {
                 const pids = [...new Set((msg.pids as string).split(',').map(Number))];
-                // SAFETY: only ExtHost + worker children are sent here.
-                // Renderers are excluded to prevent mis-killing real windows.
+                const names = decodeURIComponent(msg.names as string || '').split('|').filter(Boolean);
+                // Kill ExtHost + worker children (memory reclaim)
                 for (const pid of pids) {
                     if (pid <= 1) { continue; }
                     try { process.kill(pid, 'SIGKILL'); }
                     catch { /* already dead */ }
+                }
+                // Close zombie windows by title via AppleScript (reliable,
+                // no PID heuristics needed - matches window title directly)
+                if (process.platform === 'darwin' && names.length > 0) {
+                    for (const name of names) {
+                        const escaped = name.replace(/["\\/]/g, '');
+                        try {
+                            await execAsync(
+                                `osascript -e 'tell application "System Events" to tell process "Antigravity" to close (first window whose title contains "${escaped}")'`,
+                                5000
+                            );
+                        } catch { /* window might already be gone */ }
+                    }
                 }
                 // Purge dead PIDs from top cache then refresh dashboard
                 setTimeout(() => {
