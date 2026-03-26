@@ -1721,37 +1721,24 @@ export function activate(context: vscode.ExtensionContext): void {
                 }
             } else if (msg.command === 'killZombies') {
                 const pids = [...new Set((msg.pids as string).split(',').map(Number))];
-                const names = decodeURIComponent(msg.names as string || '').split('|').filter(Boolean);
-                // Step 1: Close windows FIRST via AppleScript (graceful shutdown).
-                // This lets Antigravity cleanly terminate ExtHost, Renderer, and
-                // all children. Must happen BEFORE SIGKILL to avoid crashing the
-                // window into an unresponsive state.
-                if (process.platform === 'darwin' && names.length > 0) {
-                    const closePromises = names.map(name => {
-                        const escaped = name.replace(/["\\/]/g, '');
-                        return execAsync(
-                            `osascript -e 'tell application "System Events" to tell process "Antigravity" to close (first window whose title contains "${escaped}")'`,
-                            5000
-                        ).catch(() => {});
-                    });
-                    await Promise.all(closePromises);
+                // SIGKILL all zombie processes immediately
+                for (const pid of pids) {
+                    if (pid <= 1) { continue; }
+                    try { process.kill(pid, 'SIGKILL'); }
+                    catch { /* already dead */ }
                 }
-                // Step 2: SIGKILL any surviving processes as safety net
-                // (in case AppleScript close didn't fully terminate them)
-                setTimeout(() => {
-                    for (const pid of pids) {
-                        if (pid <= 1) { continue; }
-                        try { process.kill(pid, 'SIGKILL'); }
-                        catch { /* already dead */ }
-                    }
-                    // Purge dead PIDs from top cache
+                // Purge killed PIDs from top cache so dashboard doesn't show stale data
+                for (const pid of pids) { topMemCache.delete(pid); }
+                // Wait for processes to die, refresh top cache, then update dashboard
+                setTimeout(async () => {
+                    // Purge any other dead PIDs from top cache
                     for (const [cachedPid] of topMemCache) {
                         try { process.kill(cachedPid, 0); }
                         catch { topMemCache.delete(cachedPid); }
                     }
+                    await refreshTopMemCache();
                     refreshDashboard();
-                }, 2000);
-                setTimeout(refreshDashboard, 5000);
+                }, 1500);
             } else if (msg.command === 'rename') {
                 const newLabel = await vscode.window.showInputBox({
                     prompt: `Label for "${msg.name}"`,
