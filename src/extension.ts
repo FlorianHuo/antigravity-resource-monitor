@@ -1219,6 +1219,12 @@ function generateDashboardShell(): string {
             var data = msg.scan;
             var sysInfo = msg.sysInfo;
 
+            // Reset header buttons that may be in busy state
+            document.querySelectorAll('.header-actions [data-action].btn-busy').forEach(function(btn) {
+                btn.classList.remove('btn-busy');
+                if (btn._origText) { btn.textContent = btn._origText; btn._origText = null; }
+            });
+
             // Summary
             document.getElementById('summary').textContent =
                 data.workspaces.length + ' workspaces | ' + data.processCount + ' processes | ' + fmtBytes(data.totalMemoryKB * 1024) + ' total (footprint)';
