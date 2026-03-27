@@ -130,6 +130,13 @@ npm run deploy   # 编译 + 安装到 ~/.antigravity/extensions/
 
 ## 更新日志
 
+### v0.4.2
+
+- 僵尸检测重写：基于 AppleScript 窗口可见性判定，取代旧的 playground 路径启发式
+- Kill All Zombies 自动重试（最多 3 轮），彻底解决进程复活问题
+- 按钮点击反馈：脉冲动画 + 文字提示（如 "Killing..."、"Refreshing..."）
+- 排除 Renderer 进程避免误杀 PDF 查看器等 WebView 面板
+
 ### v0.4.1
 
 - 设置面板使用自定义 stepper 控件（- / 值 / +）

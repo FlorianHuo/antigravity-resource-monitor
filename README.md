@@ -131,6 +131,13 @@ npm run deploy   # Compile + install to ~/.antigravity/extensions/
 
 ## Changelog
 
+### v0.4.2
+
+- Zombie detection rewritten to use AppleScript window visibility as ground truth
+- Kill All Zombies now auto-retries (up to 3 rounds) to handle Antigravity respawns
+- Button click feedback with pulse animation and text update (e.g. "Killing...", "Refreshing...")
+- Renderer processes excluded from zombie kill to prevent collateral damage to PDF viewers
+
 ### v0.4.1
 
 - Dashboard settings panel with custom stepper controls (- / value / +)

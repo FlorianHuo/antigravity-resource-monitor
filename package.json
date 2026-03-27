@@ -2,7 +2,7 @@
     "name": "antigravity-resource-monitor",
     "displayName": "Resource Monitor",
     "description": "Monitor per-window memory, system pressure, and manage all Antigravity processes",
-    "version": "0.4.1",
+    "version": "0.4.2",
     "publisher": "florian",
     "repository": {
         "type": "git",
