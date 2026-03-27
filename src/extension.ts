@@ -1029,6 +1029,15 @@ function generateDashboardShell(): string {
         font-weight: 600; transition: opacity 0.15s;
     }
     .zombie-kill-btn:hover { opacity: 0.85; }
+    /* Button click feedback */
+    [data-action].btn-busy {
+        opacity: 0.5; pointer-events: none; position: relative;
+    }
+    @keyframes btn-pulse {
+        0%, 100% { opacity: 0.5; }
+        50% { opacity: 0.3; }
+    }
+    [data-action].btn-busy { animation: btn-pulse 1s ease-in-out infinite; }
     .ws-card.zombie { opacity: 0.5; border-style: dashed; }
     .ws-card.zombie:hover { opacity: 0.8; }
     .header-actions { display: flex; gap: 8px; align-items: center; }
@@ -1365,6 +1374,24 @@ function generateDashboardShell(): string {
                 return;
             }
             e.stopPropagation();
+
+            // Visual feedback: disable button and show busy state
+            var feedbackLabels = {
+                killZombies: 'Killing...',
+                closeWorkspace: 'Closing...',
+                kill: null,
+                restartExtHost: 'Restarting...',
+                reloadWindow: 'Reloading...',
+                refresh: 'Refreshing...'
+            };
+            if (action in feedbackLabels) {
+                target.classList.add('btn-busy');
+                if (feedbackLabels[action]) {
+                    target._origText = target.textContent;
+                    target.textContent = feedbackLabels[action];
+                }
+            }
+
             if (action === 'refresh') {
                 document.getElementById('summary').textContent = 'Refreshing...';
                 vscode.postMessage({ command: 'refresh' });
