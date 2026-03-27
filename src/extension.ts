@@ -1182,12 +1182,7 @@ function generateDashboardShell(): string {
                 var zombieNames = [];
                 zombies.forEach(function(z) {
                     zombieNames.push(z.name);
-                    z.processList.forEach(function(p) {
-                        // Only kill ExtHost + worker children (no Renderers).
-                        // Window closing is handled by AppleScript via title.
-                        if (p.type === 'Renderer' || p.type === 'GPU' || p.type === 'Main' || p.type === 'Other') { return; }
-                        zombiePids.push(p.pid);
-                    });
+                    z.processList.forEach(function(p) { zombiePids.push(p.pid); });
                 });
                 zombiePids = zombiePids.join(',');
                 zombieEl.innerHTML = '<div class="zombie-bar">'
@@ -1721,24 +1716,40 @@ export function activate(context: vscode.ExtensionContext): void {
                 }
             } else if (msg.command === 'killZombies') {
                 const pids = [...new Set((msg.pids as string).split(',').map(Number))];
-                // SIGKILL all zombie processes immediately
-                for (const pid of pids) {
-                    if (pid <= 1) { continue; }
-                    try { process.kill(pid, 'SIGKILL'); }
-                    catch { /* already dead */ }
-                }
-                // Purge killed PIDs from top cache so dashboard doesn't show stale data
-                for (const pid of pids) { topMemCache.delete(pid); }
-                // Wait for processes to die, refresh top cache, then update dashboard
-                setTimeout(async () => {
-                    // Purge any other dead PIDs from top cache
+                const names = decodeURIComponent(msg.names as string || '').split('|').filter(Boolean);
+                // Must kill ALL processes including Renderer, otherwise
+                // Antigravity respawns the ExtHost because the window lives on.
+                // Use the same kill strategy as close-workspace (proven to work).
+                try {
+                    execSync(`kill -9 ${pids.filter(p => p > 1).join(' ')} 2>/dev/null; true`, { timeout: 3000 });
+                } catch { /* some may already be dead */ }
+                setTimeout(() => {
+                    for (const pid of pids) {
+                        if (pid <= 1) { continue; }
+                        try { killProcessTree(pid); } catch { /* ignore */ }
+                    }
+                    // Clean registry entries for killed zombies
+                    try {
+                        const registry = readRegistry();
+                        for (const name of names) {
+                            if (registry.entries[name]) {
+                                delete registry.entries[name];
+                            }
+                        }
+                        writeRegistry(registry);
+                    } catch { /* ignore */ }
+                    // Purge dead PIDs from top cache
+                    for (const pid of pids) { topMemCache.delete(pid); }
                     for (const [cachedPid] of topMemCache) {
                         try { process.kill(cachedPid, 0); }
                         catch { topMemCache.delete(cachedPid); }
                     }
+                }, 500);
+                // Refresh after processes are fully dead
+                setTimeout(async () => {
                     await refreshTopMemCache();
                     refreshDashboard();
-                }, 1500);
+                }, 2000);
             } else if (msg.command === 'rename') {
                 const newLabel = await vscode.window.showInputBox({
                     prompt: `Label for "${msg.name}"`,
