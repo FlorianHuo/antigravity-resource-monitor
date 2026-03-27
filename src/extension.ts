@@ -152,6 +152,51 @@ function isPlaygroundPath(wsId: string): boolean {
     return wsId.includes('playground');
 }
 
+// Background cache for visible Antigravity window names (from AppleScript).
+// Used to determine which workspaces have real, user-visible windows.
+// Workspaces without a matching window are considered zombies.
+let visibleWindowNamesCache: string[] = [];
+let visibleWindowCacheTime = 0;
+const WINDOW_CACHE_TTL_MS = 10_000;
+
+async function refreshVisibleWindowNames(): Promise<string[]> {
+    if (process.platform !== 'darwin') { return []; }
+    try {
+        const raw = await execAsync(
+            'osascript -e \'tell application "System Events" to tell process "Electron" to get name of every window\'',
+            3000
+        );
+        // AppleScript returns comma-separated: "title1, title2, ..."
+        const titles = raw.split(',').map(t => t.trim()).filter(Boolean);
+        // Extract workspace folder name (part before " \u2014 " em-dash)
+        const folderNames = titles
+            .map(t => t.split(' \u2014 ')[0].trim())
+            .filter(n => n && n !== 'Manager'); // "Manager" is a utility window, not a workspace
+        visibleWindowNamesCache = folderNames;
+        visibleWindowCacheTime = Date.now();
+        return folderNames;
+    } catch {
+        // AppleScript may fail if Antigravity is not frontmost or System Events
+        // is blocked. Fall back to cached data or empty (safer: treat all as live).
+        return visibleWindowNamesCache;
+    }
+}
+
+/**
+ * Check if a workspace name matches any visible AppleScript window.
+ * Uses substring matching: window title folder "antigravity-resource-monitor"
+ * matches humanized name "antigravity-resource-monitor", and
+ * "statistical-physics" matches "latex-projects-statistical-physics".
+ */
+function isWindowVisible(wsName: string, visibleNames: string[]): boolean {
+    for (const vn of visibleNames) {
+        if (wsName.includes(vn) || vn.includes(wsName)) {
+            return true;
+        }
+    }
+    return false;
+}
+
 function readRegistry(): Registry {
     try {
         if (fs.existsSync(REGISTRY_PATH)) {
@@ -558,6 +603,12 @@ function classifySharedProcess(command: string): string {
 async function scanWorkspaces(): Promise<ScanResult> {
     const registry = readRegistry();
 
+    // Refresh visible window names (AppleScript) for zombie detection.
+    // Run in parallel with ps data gathering below.
+    const windowNamesPromise = (Date.now() - visibleWindowCacheTime > WINDOW_CACHE_TTL_MS)
+        ? refreshVisibleWindowNames()
+        : Promise.resolve(visibleWindowNamesCache);
+
     try {
         // Parse ps with lstart for time-correlation of Renderer/Plugin processes.
         // Format: PID PPID RSS %CPU LSTART(day month dd hh:mm:ss yyyy) COMMAND
@@ -682,7 +733,12 @@ async function scanWorkspaces(): Promise<ScanResult> {
                 subtitle = wsIdToPath(wsId);
             }
 
-            const isZombie = isPlaygroundPath(wsId) && !subtitle;
+            // Zombie detection: a workspace is zombie if it has no visible
+            // macOS window (checked via AppleScript). This catches playground
+            // orphans AND stale workspaces (like Desktop opened from a closed
+            // conversation) that the old heuristic missed.
+            const visibleNames = await windowNamesPromise;
+            const isZombie = visibleNames.length > 0 && !isWindowVisible(name, visibleNames);
 
             const group: WorkspaceGroup = {
                 name, workspaceId: wsId, subtitle, isZombie, extHostPid,
@@ -1182,11 +1238,19 @@ function generateDashboardShell(): string {
                 var zombieNames = [];
                 zombies.forEach(function(z) {
                     zombieNames.push(z.name);
-                    z.processList.forEach(function(p) { zombiePids.push(p.pid); });
+                    // Only include ExtHost and worker PIDs - NOT Renderer.
+                    // Renderer PID matching is unreliable and can kill real
+                    // windows' WebView processes (PDFs, panels). The handler
+                    // uses auto-retry to exhaust Antigravity's respawner.
+                    z.processList.forEach(function(p) {
+                        if (p.type !== 'Renderer') {
+                            zombiePids.push(p.pid);
+                        }
+                    });
                 });
                 zombiePids = zombiePids.join(',');
                 zombieEl.innerHTML = '<div class="zombie-bar">'
-                    + '<span><b>' + zombies.length + '</b> zombie playground(s) using <b>' + fmtBytes(zombieMemKB * 1024) + '</b> (unnamed, empty)</span>'
+                    + '<span><b>' + zombies.length + '</b> zombie workspace(s) using <b>' + fmtBytes(zombieMemKB * 1024) + '</b> (no visible window)</span>'
                     + '<button class="zombie-kill-btn" data-action="killZombies" data-pids="' + zombiePids + '" data-names="' + encodeURIComponent(zombieNames.join('|')) + '">Kill All Zombies</button>'
                     + '</div>';
             } else {
@@ -1715,41 +1779,54 @@ export function activate(context: vscode.ExtensionContext): void {
                     setTimeout(refreshDashboard, 2000);
                 }
             } else if (msg.command === 'killZombies') {
-                const pids = [...new Set((msg.pids as string).split(',').map(Number))];
                 const names = decodeURIComponent(msg.names as string || '').split('|').filter(Boolean);
-                // Must kill ALL processes including Renderer, otherwise
-                // Antigravity respawns the ExtHost because the window lives on.
-                // Use the same kill strategy as close-workspace (proven to work).
-                try {
-                    execSync(`kill -9 ${pids.filter(p => p > 1).join(' ')} 2>/dev/null; true`, { timeout: 3000 });
-                } catch { /* some may already be dead */ }
-                setTimeout(() => {
-                    for (const pid of pids) {
-                        if (pid <= 1) { continue; }
-                        try { killProcessTree(pid); } catch { /* ignore */ }
-                    }
-                    // Clean registry entries for killed zombies
-                    try {
-                        const registry = readRegistry();
-                        for (const name of names) {
-                            if (registry.entries[name]) {
-                                delete registry.entries[name];
+                // Strategy: kill zombie ExtHost trees repeatedly until Antigravity
+                // stops respawning them. Tested: respawn stops after ~2 rounds.
+                // We do NOT kill Renderers because PID-based matching is unreliable
+                // and can destroy real windows' WebView processes (PDFs, panels).
+                const MAX_ROUNDS = 3;
+                const ROUND_DELAY_MS = 3000;
+                let round = 0;
+                const killRound = async () => {
+                    round++;
+                    // Re-scan to find current zombie ExtHost PIDs (may be new after respawn)
+                    const scan = await scanWorkspaces();
+                    const currentZombies = scan.workspaces.filter(ws => ws.isZombie);
+                    if (currentZombies.length === 0 || round > MAX_ROUNDS) {
+                        // Done: clean up registry and refresh
+                        try {
+                            const registry = readRegistry();
+                            for (const name of names) {
+                                if (registry.entries[name]) { delete registry.entries[name]; }
                             }
+                            writeRegistry(registry);
+                        } catch { /* ignore */ }
+                        // Purge dead PIDs from top cache
+                        for (const [cachedPid] of topMemCache) {
+                            try { process.kill(cachedPid, 0); }
+                            catch { topMemCache.delete(cachedPid); }
                         }
-                        writeRegistry(registry);
-                    } catch { /* ignore */ }
-                    // Purge dead PIDs from top cache
-                    for (const pid of pids) { topMemCache.delete(pid); }
-                    for (const [cachedPid] of topMemCache) {
-                        try { process.kill(cachedPid, 0); }
-                        catch { topMemCache.delete(cachedPid); }
+                        await refreshTopMemCache();
+                        refreshDashboard();
+                        return;
                     }
-                }, 500);
-                // Refresh after processes are fully dead
-                setTimeout(async () => {
-                    await refreshTopMemCache();
-                    refreshDashboard();
-                }, 2000);
+                    // Kill all zombie ExtHost trees (SIGKILL for speed)
+                    for (const z of currentZombies) {
+                        const pidsToKill = z.processList
+                            .filter(p => p.type !== 'Renderer' && p.pid > 1)
+                            .map(p => p.pid);
+                        if (pidsToKill.length > 0) {
+                            try {
+                                execSync(`kill -9 ${pidsToKill.join(' ')} 2>/dev/null; true`, { timeout: 3000 });
+                            } catch { /* some may already be dead */ }
+                        }
+                        // Also kill any children that may have been missed
+                        try { killProcessTree(z.extHostPid); } catch { /* ignore */ }
+                    }
+                    // Wait and retry
+                    setTimeout(killRound, ROUND_DELAY_MS);
+                };
+                killRound();
             } else if (msg.command === 'rename') {
                 const newLabel = await vscode.window.showInputBox({
                     prompt: `Label for "${msg.name}"`,
