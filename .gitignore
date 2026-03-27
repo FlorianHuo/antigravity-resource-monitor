@@ -3,4 +3,5 @@ out/
 *.vsix
 .vscode-test/
 .DS_Store
+.agp/
 FORUM_POST.md
