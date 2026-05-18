@@ -116,6 +116,13 @@ interface ScanResult {
     processCount: number;
 }
 
+// Global scan result cache shared between dashboard and status bar.
+// Ensures both display the same numbers. Written by whichever path
+// (dashboard refresh or status bar timer) runs the scan.
+let lastScanResult: ScanResult | null = null;
+let lastScanTime = 0;
+const SCAN_CACHE_TTL_MS = 8_000; // cache valid for 8 seconds
+
 // ============================================================
 // Utilities
 // ============================================================
@@ -1489,9 +1496,10 @@ function generateDashboardShell(): string {
 async function sendDashboardData(panel: vscode.WebviewPanel): Promise<void> {
     // Run data gathering in parallel for faster response
     const [data, sysInfo] = await Promise.all([scanWorkspaces(), getSystemMemoryInfo()]);
-    // Only push if scan returned real data; skip empty results to preserve
-    // the last known good state (avoids dashboard flashing to "0 workspaces")
+    // Update global cache so status bar uses the same data
     if (data.processCount > 0) {
+        lastScanResult = data;
+        lastScanTime = Date.now();
         panel.webview.postMessage({
             command: 'updateData',
             scan: data,
@@ -1668,24 +1676,42 @@ export function activate(context: vscode.ExtensionContext): void {
         statusBarUpdating = true;
         statusBarUpdateStart = Date.now();
         try {
-        // Use the same metric as the dashboard: ext host + children RSS
-        const totalKB = await getCurrentWindowMemoryKB();
-        const rssStr = formatBytes(totalKB * 1024);
+        // Read from global scan cache (populated by dashboard refresh).
+        // If cache is stale (dashboard not open), run our own scan.
+        let scan: ScanResult;
+        if (lastScanResult && Date.now() - lastScanTime < SCAN_CACHE_TTL_MS) {
+            scan = lastScanResult;
+        } else {
+            scan = await scanWorkspaces();
+            if (scan.processCount > 0) {
+                lastScanResult = scan;
+                lastScanTime = Date.now();
+            } else if (lastScanResult) {
+                // Scan returned empty (timeout?), use stale cache
+                scan = lastScanResult;
+            }
+        }
+        const globalKB = scan.totalMemoryKB;
+        const globalStr = formatBytes(globalKB * 1024);
 
-        // Track memory history for sparkline
-        memoryHistory.push(totalKB);
+        // Track memory history for sparkline (global total)
+        memoryHistory.push(globalKB);
         if (memoryHistory.length > SPARKLINE_MAX_SAMPLES) { memoryHistory.shift(); }
         const sparkline = generateSparkline(memoryHistory);
 
-        // Combine window memory + system pressure in one item
+        // Combine global memory + system pressure in one item
         const sysInfo = await getSystemMemoryInfo();
         const pressureLbl = sysInfo ? ` | ${sysInfo.pressureLevel}` : '';
-        statusItem.text = `$(pulse) ${rssStr}${pressureLbl}`;
-        statusItem.color = getWindowColor(totalKB);
-        statusItem.backgroundColor = getWindowBackground(totalKB);
+        statusItem.text = `$(pulse) ${globalStr}${pressureLbl}`;
+        statusItem.color = getWindowColor(globalKB);
+        statusItem.backgroundColor = getWindowBackground(globalKB);
 
         // Rich tooltip with sparkline
-        const tooltipLines = [`Window: ${rssStr} (footprint)`];
+        const wsCount = scan.workspaces.length;
+        const procCount = scan.processCount;
+        const tooltipLines = [
+            `Total: ${globalStr} (${wsCount} workspaces, ${procCount} processes)`,
+        ];
         if (sparkline) { tooltipLines.push(`Trend:  ${sparkline}  (${SPARKLINE_MAX_SAMPLES} samples)`); }
         if (sysInfo) {
             tooltipLines.push(`System: ${formatBytes(sysInfo.appMemoryBytes)} / ${formatBytes(sysInfo.totalBytes)} | Swap: ${formatBytes(sysInfo.swapUsedBytes)}`);
