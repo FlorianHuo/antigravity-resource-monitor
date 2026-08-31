@@ -1,3 +1,5 @@
+
+
 **English** | [中文](./README_CN.md)
 
 <h1 align="center">Resource Monitor for Antigravity</h1>
@@ -84,7 +86,7 @@ Or via CLI:
 python3 scripts/patch_suppress_crash.py
 ```
 
-Re-run after each Antigravity update. Use `--restore` to undo.
+Re-run after each Antigravity update. Use `--restore` to undo or `--status` to check if applied.
 
 > **Disclaimer**: The patch script modifies Antigravity's internal files. Backups are created automatically
 > and can be restored at any time. This is an optional feature provided as-is with no warranty.
